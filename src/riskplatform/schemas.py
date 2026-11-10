@@ -33,7 +33,9 @@ def positions_schema(cfg: GeneratorConfig) -> pa.DataFrameSchema:
                 error="reprice_days must not exceed residual_days",
             ),
             pa.Check(
-                lambda df: (df["rate_type"] != "fixed") | (df["reprice_days"] == df["residual_days"]),
+                lambda df: (
+                    (df["rate_type"] != "fixed") | (df["reprice_days"] == df["residual_days"])
+                ),
                 error="fixed-rate positions must reprice at maturity",
             ),
             pa.Check(

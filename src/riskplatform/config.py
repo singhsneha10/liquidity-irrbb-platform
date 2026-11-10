@@ -1,5 +1,6 @@
 """Typed, validated configuration for the synthetic data generator."""
 
+import itertools
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -42,12 +43,36 @@ class Category(_Strict):
         return self
 
 
+class CurveParams(_Strict):
+    """Starting shape of one currency's yield curve: short-end and long-end rates."""
+
+    short_rate: float
+    long_rate: float
+
+
+class RatesConfig(_Strict):
+    tenors_years: list[float]
+    curve_decay_years: float = Field(gt=0)
+    daily_vol: float = Field(ge=0)
+    curves: dict[str, CurveParams]
+
+    @model_validator(mode="after")
+    def _check_tenors(self) -> "RatesConfig":
+        tenors = self.tenors_years
+        increasing = all(later > earlier for earlier, later in itertools.pairwise(tenors))
+        if not tenors or tenors[0] <= 0 or not increasing:
+            raise ValueError("tenors_years must be non-empty, positive and strictly increasing")
+        return self
+
+
 class GeneratorConfig(_Strict):
     seed: int
     start_date: date
     n_days: int = Field(gt=0)
     currencies: list[str]
     foreign_currency_weight: float = Field(gt=0, le=1)
+    balance_log_sigma: float = Field(ge=0)
+    equity_ratio: float = Field(ge=0, lt=1)
     entities: list[Entity]
     categories: list[Category]
     floating_reprice_days: tuple[int, int]
@@ -55,6 +80,7 @@ class GeneratorConfig(_Strict):
     interest_rate_sd: float = Field(ge=0)
     daily_balance_drift: float
     daily_balance_vol: float = Field(ge=0)
+    rates: RatesConfig
 
     @property
     def entity_names(self) -> list[str]:
@@ -79,6 +105,13 @@ class GeneratorConfig(_Strict):
         for label, names in (("entity", self.entity_names), ("category", self.category_names)):
             if len(names) != len(set(names)):
                 raise ValueError(f"duplicate {label} names in config")
+        if not {"asset", "liability"} <= {c.side for c in self.categories}:
+            raise ValueError("categories must include at least one asset and one liability")
+        if set(self.rates.curves) != set(self.currencies):
+            raise ValueError(
+                f"rates.curves must define exactly the currencies {self.currencies}, "
+                f"got {sorted(self.rates.curves)}"
+            )
         _check_day_range("floating_reprice_days", self.floating_reprice_days)
         return self
 

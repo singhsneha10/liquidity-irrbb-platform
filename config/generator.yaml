@@ -4,6 +4,8 @@ n_days: 60
 
 currencies: [GBP, USD, EUR]
 foreign_currency_weight: 0.2
+balance_log_sigma: 0.5
+equity_ratio: 0.06
 
 entities:
   - {name: BANK_UK, home_currency: GBP}
@@ -11,18 +13,27 @@ entities:
   - {name: BANK_US, home_currency: USD}
 
 floating_reprice_days: [1, 90]
-interest_rate_mean: 0.03
+interest_rate_mean: 0.04
 interest_rate_sd: 0.01
 daily_balance_drift: 0.0002
 daily_balance_vol: 0.004
 
+rates:
+  tenors_years: [0.0833, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0]
+  curve_decay_years: 2.0
+  daily_vol: 0.0003
+  curves:
+    GBP: {short_rate: 0.0400, long_rate: 0.0450}
+    USD: {short_rate: 0.0425, long_rate: 0.0475}
+    EUR: {short_rate: 0.0200, long_rate: 0.0300}
+
 categories:
-  - {name: central_bank_reserves,    side: asset,             n_positions: 1,  mean_balance_mn: 2000, rate_type: floating, tenor_days: [1, 1]}
+  - {name: central_bank_reserves,    side: asset,             n_positions: 1,  mean_balance_mn: 1000, rate_type: floating, tenor_days: [1, 1]}
   - {name: govt_bonds,               side: asset,             n_positions: 15, mean_balance_mn: 150,  rate_type: fixed,    tenor_days: [90, 3650]}
-  - {name: covered_bonds,            side: asset,             n_positions: 8,  mean_balance_mn: 80,   rate_type: fixed,    tenor_days: [180, 2500]}
-  - {name: corporate_bonds,          side: asset,             n_positions: 8,  mean_balance_mn: 50,   rate_type: fixed,    tenor_days: [180, 2500]}
-  - {name: corporate_loans,          side: asset,             n_positions: 40, mean_balance_mn: 120,  rate_type: floating, tenor_days: [30, 1800]}
-  - {name: retail_mortgages,         side: asset,             n_positions: 30, mean_balance_mn: 100,  rate_type: fixed,    tenor_days: [365, 9000]}
+  - {name: covered_bonds,            side: asset,             n_positions: 8,  mean_balance_mn: 50,   rate_type: fixed,    tenor_days: [180, 2500]}
+  - {name: corporate_bonds,          side: asset,             n_positions: 8,  mean_balance_mn: 40,   rate_type: fixed,    tenor_days: [180, 2500]}
+  - {name: corporate_loans,          side: asset,             n_positions: 40, mean_balance_mn: 200,  rate_type: floating, tenor_days: [30, 1800]}
+  - {name: retail_mortgages,         side: asset,             n_positions: 30, mean_balance_mn: 150,  rate_type: fixed,    tenor_days: [365, 9000]}
   - {name: retail_stable_deposits,   side: liability,         n_positions: 25, mean_balance_mn: 300,  rate_type: floating, tenor_days: [1, 1]}
   - {name: retail_less_stable_deposits, side: liability,      n_positions: 25, mean_balance_mn: 200,  rate_type: floating, tenor_days: [1, 1]}
   - {name: wholesale_operational,    side: liability,         n_positions: 15, mean_balance_mn: 150,  rate_type: floating, tenor_days: [1, 30]}
