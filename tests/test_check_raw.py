@@ -21,7 +21,7 @@ def generated(cfg):
 @pytest.fixture
 def raw_dir(generated, tmp_path):
     """A fresh, clean copy of the raw files for each test, so faults never leak between tests."""
-    write_outputs(*generated, tmp_path)
+    write_outputs(generated, tmp_path)
     return tmp_path
 
 
@@ -103,8 +103,18 @@ def _one_tenor_moves_alone(raw_dir, day_index):
     _edit(raw_dir / "rates.parquet", bump)
 
 
+def _fx_missing_a_rate(raw_dir):
+    fx = pd.read_parquet(raw_dir / "fx.parquet")
+    day = sorted(fx["date"].unique())[3]
+    _edit(
+        raw_dir / "fx.parquet",
+        lambda frame: frame[~((frame["currency"] == "USD") & (frame["date"] == day))],
+    )
+
+
 FAULTS = {
     "files_hold_their_own_date": _wrong_file_name,
+    "fx_covers_every_date": _fx_missing_a_rate,
     "day_count_matches_config": _missing_day,
     "positions_and_rates_share_dates": _rates_missing_a_day,
     "every_position_every_day": _missing_row,

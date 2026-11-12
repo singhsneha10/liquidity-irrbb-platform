@@ -1,0 +1,14 @@
+# Cash-flow maturity ladder buckets, validated by riskplatform.config.LadderConfig.
+# A reporting choice (common treasury buckets), not a regulatory parameter.
+# up_to_days is the last residual day included in the bucket; the last bucket is open-ended.
+
+buckets:
+  - {label: overnight, up_to_days: 1}
+  - {label: 2-7 days, up_to_days: 7}
+  - {label: 8-30 days, up_to_days: 30}
+  - {label: 31-90 days, up_to_days: 90}
+  - {label: 91-180 days, up_to_days: 180}
+  - {label: 181-365 days, up_to_days: 365}
+  - {label: 1-2 years, up_to_days: 730}
+  - {label: 2-5 years, up_to_days: 1825}
+  - {label: over 5 years}

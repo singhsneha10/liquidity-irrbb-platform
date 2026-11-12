@@ -36,12 +36,13 @@ from riskplatform.quality.outliers import find_outliers
 from riskplatform.quality.reconcile import ReconciliationFailed, reconcile
 from riskplatform.quality.report import build_report, table_of, write_report
 from riskplatform.quality.rows import QUARANTINE_COLUMNS, FileLevelError, validate_rows
-from riskplatform.schemas import positions_schema, quarantine_schema, rates_schema
+from riskplatform.schemas import fx_schema, positions_schema, quarantine_schema, rates_schema
 
 logger = logging.getLogger(__name__)
 
 MANIFEST = "_run.json"
-ALL_FILES = "positions and rates"
+ALL_FILES = "all raw files"
+TABLE_FILES = ["rates.parquet", "fx.parquet"]  # one file per table (positions: one per day)
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,7 @@ def _new_run_id(run_at: pd.Timestamp) -> str:
 def _read_raw(raw_dir: Path) -> dict[str, pd.DataFrame]:
     """Every raw data file, keyed by its path relative to raw_dir. Unreadable files stop the run."""
     paths = sorted((raw_dir / "positions").glob("date=*.parquet"))
-    paths += [raw_dir / "rates.parquet"] if (raw_dir / "rates.parquet").exists() else []
+    paths += [raw_dir / name for name in TABLE_FILES if (raw_dir / name).exists()]
     arrived = {}
     for path in paths:
         name = path.relative_to(raw_dir).as_posix()
@@ -115,7 +116,11 @@ def run_quality(
     raw_dir, out_dir = Path(raw_dir), Path(out_dir)
     run_at = run_at if run_at is not None else pd.Timestamp.now(tz="UTC")
     run_id = _new_run_id(run_at)
-    schemas = {"positions": positions_schema(cfg), "rates": rates_schema(cfg)}
+    schemas = {
+        "positions": positions_schema(cfg),
+        "rates": rates_schema(cfg),
+        "fx": fx_schema(cfg),
+    }
 
     arrived: dict[str, pd.DataFrame] = {}
     validated: dict[str, pd.DataFrame] = {}
@@ -125,9 +130,11 @@ def run_quality(
     try:
         arrived = _read_raw(raw_dir)
         position_files = [name for name in arrived if table_of(name) == "positions"]
-        if not position_files or "rates.parquet" not in arrived:
+        missing = [name for name in TABLE_FILES if name not in arrived]
+        if not position_files or missing:
+            problems = ["no positions files"] if not position_files else []
             raise FileLevelError(
-                ALL_FILES, raw_dir.as_posix(), ["positions or rates files missing"]
+                ALL_FILES, raw_dir.as_posix(), problems + [f"{m} missing" for m in missing]
             )
         try:
             control = read_control_totals(raw_dir)
@@ -146,8 +153,8 @@ def run_quality(
         positions = pd.concat(
             [validated[name].assign(filename=name) for name in position_files], ignore_index=True
         )
-        rates = validated["rates.parquet"]
-        file_checks = check_files(positions, rates, cfg)
+        rates, fx = validated["rates.parquet"], validated["fx.parquet"]
+        file_checks = check_files(positions, rates, fx, cfg)
         outliers = find_outliers(positions.drop(columns="filename"), rates, quality_cfg.outliers)
     except FileLevelError as stop:
         stop_reasons = [f"{stop.source_file}: {problem}" for problem in stop.problems]

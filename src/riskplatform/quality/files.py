@@ -21,6 +21,7 @@ STOP_CHECKS = (
     "files_hold_their_own_date",  # a file holding the wrong date would misplace a whole day
     "day_count_matches_config",  # a missing day changes every total and trend
     "positions_and_rates_share_dates",  # a day without curves cannot be priced
+    "fx_covers_every_date",  # without a rate, amounts cannot be converted for entity/group totals
 )
 WARNING_CHECKS = (
     "static_attributes_unchanged",  # e.g. a position switching currency or category
@@ -41,17 +42,17 @@ class FileChecksFailed(FileLevelError):
     def __init__(self, report: FileCheckReport):
         self.report = report
         failed = [f"{r.name} ({r.failures} offending rows)" for r in report.stops if not r.passed]
-        super().__init__("positions and rates", "all files", failed)
+        super().__init__("all raw tables", "all files", failed)
 
 
 def check_files(
-    positions: pd.DataFrame, rates: pd.DataFrame, cfg: GeneratorConfig
+    positions: pd.DataFrame, rates: pd.DataFrame, fx: pd.DataFrame, cfg: GeneratorConfig
 ) -> FileCheckReport:
     """Run the STOP and WARNING checks; raise FileChecksFailed if any STOP check fails.
 
     positions needs a 'filename' column naming each row's source file.
     """
-    results = run_checks_on_tables(positions, rates, cfg, only=STOP_CHECKS + WARNING_CHECKS)
+    results = run_checks_on_tables(positions, rates, fx, cfg, only=STOP_CHECKS + WARNING_CHECKS)
     by_name = {result.name: result for result in results}
     report = FileCheckReport(
         stops=[by_name[name] for name in STOP_CHECKS],

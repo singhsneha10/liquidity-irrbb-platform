@@ -11,17 +11,23 @@ import pandas as pd
 
 from riskplatform.quality.files import FileCheckReport
 from riskplatform.quality.reconcile import Reconciliation
+from riskplatform.schemas import RAW_TABLES
 
 MAX_MARKDOWN_ROWS = 20  # longer lists are cut in the Markdown; the JSON always has everything
 
 
 def table_of(file_name: str) -> str:
-    """The raw table a file belongs to, from its path relative to the raw folder."""
-    return "rates" if file_name == "rates.parquet" else "positions"
+    """The raw table a file belongs to, from its path relative to the raw folder.
+
+    Files under positions/ are positions; a top-level <table>.parquet is that table (rates, fx).
+    """
+    if file_name.startswith("positions/"):
+        return "positions"
+    return file_name.removesuffix(".parquet")
 
 
 def _rows_by_table(frames: dict[str, pd.DataFrame]) -> dict[str, int]:
-    counts = {"positions": 0, "rates": 0}
+    counts = {table: 0 for table in RAW_TABLES}
     for name, frame in frames.items():
         counts[table_of(name)] += len(frame)
     return counts
@@ -140,7 +146,7 @@ def render_markdown(report: dict) -> str:
         _md_table(
             [
                 {"table": t, "arrived": rows["arrived"][t], "validated": rows["validated"][t]}
-                for t in ("positions", "rates")
+                for t in RAW_TABLES
             ],
             ["table", "arrived", "validated"],
         )

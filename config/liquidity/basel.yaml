@@ -1,0 +1,110 @@
+# Basel III liquidity rules (BCBS Basel Framework, chapters LCR20/30/40 and NSF20/30).
+# Source: https://www.bis.org/basel_framework/ (LCR chapters in force 15 Dec 2019; LCR30 updated
+# 5 Jun 2020, LCR40 30 Mar 2023, NSF30 5 Jul 2024). Factors verified against that text on
+# 2026-11-12; each carries its paragraph reference in `ref`.
+#
+# Our data has no ratings, deposit-insurance flags, counterparty types or encumbrance flags, so
+# some treatments rest on an assumption. Each such treatment says so in `assumption`.
+# Validated by riskplatform.config.LiquidityRules.
+
+regime: basel
+name: Basel III (BCBS)
+
+lcr:
+  horizon_days: {value: 30, ref: "LCR40.20"}
+  minimum: {value: 1.00, ref: "LCR20.5"}
+  inflow_cap: {value: 0.75, ref: "LCR40.77"}  # inflows may offset at most 75% of outflows
+  level2_cap: {value: 0.40, ref: "LCR30.31, LCR30.35"}  # Level 2 at most 40% of HQLA
+  level2b_cap: {value: 0.15, ref: "LCR30.33, LCR30.36"}  # Level 2B at most 15% of HQLA
+  level1_covered_bond_cap: null  # Basel has no Level 1 covered bonds
+
+  hqla:
+    central_bank_reserves:
+      {level: "1", haircut: 0.00, ref: "LCR30.40, LCR30.41(2)",
+       assumption: "reserves can be drawn down in times of stress"}
+    govt_bonds:
+      {level: "1", haircut: 0.00, ref: "LCR30.40, LCR30.41(3)",
+       assumption: "sovereigns with a 0% risk weight (UK, US, AAA euro area)"}
+    covered_bonds:
+      {level: "2A", haircut: 0.15, ref: "LCR30.43",
+       assumption: "rated AA- or higher and not issued by the bank itself"}
+    corporate_bonds:
+      {level: "2B", haircut: 0.50, ref: "LCR30.45(2)",
+       assumption: "rated A+ to BBB- (AA- or higher would be Level 2A)"}
+
+  outflows:
+    retail_stable_deposits:
+      {rate: 0.05, within_horizon_only: false, ref: "LCR40.7",
+       assumption: "fully insured with an established relationship; the 3% option (LCR40.11) is not used"}
+    retail_less_stable_deposits:
+      {rate: 0.10, within_horizon_only: false, ref: "LCR40.13"}
+    wholesale_operational:
+      {rate: 0.25, within_horizon_only: true, ref: "LCR40.20, LCR40.26",
+       assumption: "the whole balance qualifies as operational and is not insured"}
+    wholesale_non_operational:
+      {rate: 0.40, within_horizon_only: true, ref: "LCR40.20, LCR40.40",
+       assumption: "non-financial corporate depositors, not fully insured; no early withdrawal beyond 30 days"}
+    financial_institution_deposits:
+      {rate: 1.00, within_horizon_only: true, ref: "LCR40.20, LCR40.42"}
+    term_debt:
+      {rate: 1.00, within_horizon_only: true, ref: "LCR40.42, LCR40.43",
+       assumption: "holders unknown, so treated as financial institutions (most conservative)"}
+    undrawn_committed_lines:
+      {rate: 0.10, within_horizon_only: false, ref: "LCR40.64(2)",
+       assumption: "committed credit facilities to non-financial corporates"}
+
+  inflows:  # HQLA maturing within 30 days are not inflows (LCR40.88), so no bonds appear here
+    corporate_loans:
+      {rate: 0.50, within_horizon_only: true, ref: "LCR40.87",
+       assumption: "performing loans to non-financial corporates; principal only"}
+    retail_mortgages:
+      {rate: 0.50, within_horizon_only: true, ref: "LCR40.86",
+       assumption: "performing retail loans; principal only"}
+
+nsfr:
+  minimum: {value: 1.00, ref: "NSF20.2"}
+
+  # Bands by residual maturity: a band applies when residual_days < below_days; the last band
+  # (no below_days) applies to everything longer. 6 months is taken as 183 days.
+  asf:
+    equity:
+      - {factor: 1.00, ref: "NSF30.10(1)", assumption: "the implied equity is Tier 1 capital"}
+    retail_stable_deposits:
+      - {below_days: 365, factor: 0.95, ref: "NSF30.11"}
+      - {factor: 1.00, ref: "NSF30.10(3)"}
+    retail_less_stable_deposits:
+      - {below_days: 365, factor: 0.90, ref: "NSF30.12"}
+      - {factor: 1.00, ref: "NSF30.10(3)"}
+    wholesale_operational:
+      - {below_days: 365, factor: 0.50, ref: "NSF30.13(2)"}
+      - {factor: 1.00, ref: "NSF30.10(3)"}
+    wholesale_non_operational:
+      - {below_days: 365, factor: 0.50, ref: "NSF30.13(1)"}
+      - {factor: 1.00, ref: "NSF30.10(3)"}
+    financial_institution_deposits:
+      - {below_days: 183, factor: 0.00, ref: "NSF30.14(1)"}
+      - {below_days: 365, factor: 0.50, ref: "NSF30.13(4)"}
+      - {factor: 1.00, ref: "NSF30.10(3)"}
+    term_debt:
+      - {below_days: 183, factor: 0.00, ref: "NSF30.14(1)",
+         assumption: "no rule for own debt with unknown holders; treated as from financial institutions"}
+      - {below_days: 365, factor: 0.50, ref: "NSF30.13(4)"}
+      - {factor: 1.00, ref: "NSF30.10(3)"}
+
+  rsf:
+    central_bank_reserves:
+      - {factor: 0.00, ref: "NSF30.25(2)"}
+    govt_bonds:
+      - {factor: 0.05, ref: "NSF30.26", assumption: "unencumbered Level 1"}
+    covered_bonds:
+      - {factor: 0.15, ref: "NSF30.28(1)", assumption: "unencumbered Level 2A"}
+    corporate_bonds:
+      - {factor: 0.50, ref: "NSF30.29(1)", assumption: "unencumbered Level 2B"}
+    corporate_loans:
+      - {below_days: 365, factor: 0.50, ref: "NSF30.29(5)"}
+      - {factor: 0.85, ref: "NSF30.31(2)", assumption: "risk weight above 35%"}
+    retail_mortgages:
+      - {below_days: 365, factor: 0.50, ref: "NSF30.29(5)"}
+      - {factor: 0.65, ref: "NSF30.30(1)", assumption: "qualifies for a 35% or lower risk weight"}
+    undrawn_committed_lines:
+      - {factor: 0.05, ref: "NSF30.34 (Table 1)", assumption: "5% of the undrawn amount"}

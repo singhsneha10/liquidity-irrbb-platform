@@ -10,7 +10,7 @@ from riskplatform.config import GeneratorConfig, RateType, Side
 
 SIDES = list(get_args(Side))
 RATE_TYPES = list(get_args(RateType))
-RAW_TABLES = ["positions", "rates"]
+RAW_TABLES = ["positions", "rates", "fx"]
 
 
 def positions_schema(cfg: GeneratorConfig) -> pa.DataFrameSchema:
@@ -62,6 +62,31 @@ def rates_schema(cfg: GeneratorConfig) -> pa.DataFrameSchema:
             "rate": pa.Column(float, pa.Check.in_range(-0.05, 0.25)),
         },
         unique=["date", "currency", "tenor_years"],
+        strict=True,
+        coerce=True,
+    )
+
+
+def fx_schema(cfg: GeneratorConfig) -> pa.DataFrameSchema:
+    """Contract for FX rates (one row per date and currency, the reporting currency included).
+
+    to_reporting is the reporting currency per one unit of the currency, so converting any
+    amount is amount x to_reporting; the reporting currency's own row is exactly 1.
+    """
+    reporting = cfg.fx.reporting_currency
+    return pa.DataFrameSchema(
+        columns={
+            "date": pa.Column("datetime64[ns]"),
+            "currency": pa.Column(str, pa.Check.isin(cfg.currencies)),
+            "to_reporting": pa.Column(float, pa.Check.gt(0)),
+        },
+        checks=[
+            pa.Check(
+                lambda df: (df["currency"] != reporting) | (df["to_reporting"] == 1.0),
+                error=f"the reporting currency ({reporting}) must convert at exactly 1",
+            ),
+        ],
+        unique=["date", "currency"],
         strict=True,
         coerce=True,
     )

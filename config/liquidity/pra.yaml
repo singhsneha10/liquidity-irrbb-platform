@@ -1,0 +1,112 @@
+# UK PRA liquidity rules: PRA Rulebook "Liquidity Coverage Ratio (CRR)" Part (the restated UK
+# LCR) and "Liquidity (CRR)" Part (NSFR, Articles 428a-428ah).
+# Source: https://www.prarulebook.co.uk/pra-rules/liquidity-coverage-ratio-crr and
+#         https://www.prarulebook.co.uk/pra-rules/liquidity-crr
+# Factors verified against the versions in force on 2026-11-12 (rules dated 01/01/2022 or
+# 01/07/2024). Versions taking effect after 01/01/2027 were NOT reviewed.
+#
+# Same structure and same data assumptions as basel.yaml. Validated by
+# riskplatform.config.LiquidityRules.
+
+regime: pra
+name: UK PRA (PRA Rulebook)
+
+lcr:
+  horizon_days: {value: 30, ref: "LCR Art 22"}
+  minimum: {value: 1.00, ref: "LCR Art 4"}
+  inflow_cap: {value: 0.75, ref: "LCR Art 33(1)"}
+  level2_cap: {value: 0.40, ref: "LCR Art 17(1)(a) (at least 60% Level 1), Annex I"}
+  level2b_cap: {value: 0.15, ref: "LCR Art 17(1)(c), Annex I"}
+  level1_covered_bond_cap:  # at least 30% of the buffer must be Level 1 other than covered bonds
+    {value: 0.70, ref: "LCR Art 17(1)(b), Annex I"}
+
+  hqla:
+    central_bank_reserves:
+      {level: "1", haircut: 0.00, ref: "LCR Art 10(1)(b)(iii), Art 10(2)",
+       assumption: "reserves can be withdrawn at any time during stress periods"}
+    govt_bonds:
+      {level: "1", haircut: 0.00, ref: "LCR Art 10(1)(c), Art 10(2)",
+       assumption: "UK government, or third-country governments at credit quality step 1"}
+    covered_bonds:
+      {level: "1_covered", haircut: 0.07, ref: "LCR Art 10(1)(f), Art 10(2)",
+       assumption: "extremely high quality: credit quality step 1, issue size at least GBP 440m"}
+    corporate_bonds:
+      {level: "2B", haircut: 0.50, ref: "LCR Art 12(1)(b), Art 12(2)(b)",
+       assumption: "credit quality step 2-3, issue size at least GBP 220m"}
+
+  outflows:
+    retail_stable_deposits:
+      {rate: 0.05, within_horizon_only: false, ref: "LCR Art 24(1)",
+       assumption: "covered by a deposit guarantee scheme and stable"}
+    retail_less_stable_deposits:
+      {rate: 0.10, within_horizon_only: false, ref: "LCR Art 25(1)",
+       assumption: "no higher-outflow category under Art 25(3) applies"}
+    wholesale_operational:
+      {rate: 0.25, within_horizon_only: true, ref: "LCR Art 22(2)(b), Art 27(1)",
+       assumption: "the whole balance qualifies as operational and is not covered by a guarantee scheme"}
+    wholesale_non_operational:
+      {rate: 0.40, within_horizon_only: true, ref: "LCR Art 22(2)(b), Art 28(1)",
+       assumption: "non-financial corporate depositors, not covered by a guarantee scheme"}
+    financial_institution_deposits:
+      {rate: 1.00, within_horizon_only: true, ref: "LCR Art 31a(1)"}
+    term_debt:
+      {rate: 1.00, within_horizon_only: true, ref: "LCR Art 28(6), Art 22"}
+    undrawn_committed_lines:
+      {rate: 0.10, within_horizon_only: false, ref: "LCR Art 31(4)",
+       assumption: "committed credit facilities to non-financial corporates"}
+
+  inflows:  # liquid assets in the buffer are not inflows (LCR Art 32(6))
+    corporate_loans:
+      {rate: 0.50, within_horizon_only: true, ref: "LCR Art 32(3)(a)",
+       assumption: "monies due from non-financial customers; principal only"}
+    retail_mortgages:
+      {rate: 0.50, within_horizon_only: true, ref: "LCR Art 32(3)(a)",
+       assumption: "monies due from non-financial (retail) customers; principal only"}
+
+nsfr:
+  minimum: {value: 1.00, ref: "Liquidity (CRR) Art 428b"}
+
+  # Bands by residual maturity, as in basel.yaml. 6 months is taken as 183 days.
+  asf:
+    equity:
+      - {factor: 1.00, ref: "Art 428o(a)", assumption: "the implied equity is CET1 capital"}
+    retail_stable_deposits:
+      - {below_days: 365, factor: 0.95, ref: "Art 428n"}
+      - {factor: 1.00, ref: "Art 428o(e)"}
+    retail_less_stable_deposits:
+      - {below_days: 365, factor: 0.90, ref: "Art 428m"}
+      - {factor: 1.00, ref: "Art 428o(e)"}
+    wholesale_operational:
+      - {below_days: 365, factor: 0.50, ref: "Art 428l(a)"}
+      - {factor: 1.00, ref: "Art 428o(e)"}
+    wholesale_non_operational:
+      - {below_days: 365, factor: 0.50, ref: "Art 428l(b)(v)"}
+      - {factor: 1.00, ref: "Art 428o(e)"}
+    financial_institution_deposits:
+      - {below_days: 183, factor: 0.00, ref: "Art 428k(3)(c)"}
+      - {below_days: 365, factor: 0.50, ref: "Art 428l(c)"}
+      - {factor: 1.00, ref: "Art 428o(e)"}
+    term_debt:
+      - {below_days: 183, factor: 0.00, ref: "Art 428k(3)(d)",
+         assumption: "no specific rule for own debt with unknown holders; the catch-all applies"}
+      - {below_days: 365, factor: 0.50, ref: "Art 428l(d)"}
+      - {factor: 1.00, ref: "Art 428o(e)"}
+
+  rsf:
+    central_bank_reserves:
+      - {factor: 0.00, ref: "Art 428r(1)(c)"}
+    govt_bonds:
+      - {factor: 0.00, ref: "Art 428r(1)(a)", assumption: "unencumbered Level 1 (other than covered bonds)"}
+    covered_bonds:
+      - {factor: 0.07, ref: "Art 428t", assumption: "unencumbered Level 1 extremely high quality covered bonds"}
+    corporate_bonds:
+      - {factor: 0.50, ref: "Art 428ad(a)", assumption: "unencumbered Level 2B"}
+    corporate_loans:
+      - {below_days: 365, factor: 0.50, ref: "Art 428ad(c)(v)"}
+      - {factor: 0.85, ref: "Art 428ag(c)", assumption: "risk weight above 35%"}
+    retail_mortgages:
+      - {below_days: 365, factor: 0.50, ref: "Art 428ad(c)",
+         assumption: "loans to non-financial (retail) customers under one year; only point (c)(v) (corporates) was verified directly"}
+      - {factor: 0.65, ref: "Art 428af(1)(a)", assumption: "qualifies for a 35% or lower risk weight"}
+    undrawn_committed_lines:
+      - {factor: 0.05, ref: "Art 428s(1)(c)", assumption: "5% of the undrawn amount"}

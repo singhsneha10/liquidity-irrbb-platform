@@ -43,6 +43,17 @@ CHECKS = {
         FULL OUTER JOIN (SELECT DISTINCT date FROM rates) AS r USING (date)
         WHERE p.date IS NULL OR r.date IS NULL
     """,
+    "fx_covers_every_date": """
+        WITH expected AS (
+            SELECT d.date, c.currency
+            FROM (SELECT DISTINCT date FROM positions) AS d
+            CROSS JOIN currencies AS c
+        )
+        SELECT e.date, e.currency
+        FROM expected AS e
+        LEFT JOIN fx ON fx.date = e.date AND fx.currency = e.currency
+        WHERE fx.to_reporting IS NULL
+    """,
     "every_position_every_day": """
         SELECT position_id
         FROM positions
@@ -187,6 +198,8 @@ def _load_config(con: duckdb.DuckDBPyConnection, cfg: GeneratorConfig) -> None:
         "CREATE TABLE settings AS SELECT ? AS n_days, ? AS equity_ratio, ? AS curve_decay_years",
         [cfg.n_days, cfg.equity_ratio, cfg.rates.curve_decay_years],
     )
+    con.execute("CREATE TABLE currencies (currency VARCHAR)")
+    con.executemany("INSERT INTO currencies VALUES (?)", [(c,) for c in cfg.currencies])
     con.execute("CREATE TABLE curve_config (currency VARCHAR, short_rate DOUBLE, long_rate DOUBLE)")
     con.executemany(
         "INSERT INTO curve_config VALUES (?, ?, ?)",
@@ -224,12 +237,14 @@ def run_checks(
     with duckdb.connect() as con:  # in-memory database, gone when the block ends
         _view(con, "positions", f"FROM read_parquet({positions_glob}, filename = true)")
         _view(con, "rates", f"FROM read_parquet({_sql_path(raw_dir / 'rates.parquet')})")
+        _view(con, "fx", f"FROM read_parquet({_sql_path(raw_dir / 'fx.parquet')})")
         return _run(con, cfg, only)
 
 
 def run_checks_on_tables(
     positions: pd.DataFrame,
     rates: pd.DataFrame,
+    fx: pd.DataFrame,
     cfg: GeneratorConfig,
     only: Collection[str] | None = None,
 ) -> list[CheckResult]:
@@ -239,10 +254,9 @@ def run_checks_on_tables(
     filename option adds), so the file-name check can run.
     """
     with duckdb.connect() as con:
-        con.register("positions_input", positions)
-        con.register("rates_input", rates)
-        _view(con, "positions", "FROM positions_input")
-        _view(con, "rates", "FROM rates_input")
+        for name, frame in (("positions", positions), ("rates", rates), ("fx", fx)):
+            con.register(f"{name}_input", frame)
+            _view(con, name, f"FROM {name}_input")
         return _run(con, cfg, only)
 
 

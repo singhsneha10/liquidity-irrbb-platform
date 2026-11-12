@@ -26,7 +26,7 @@ def generated(cfg):
 
 @pytest.fixture
 def tables(generated):
-    positions, rates = generated
+    positions, rates = generated.positions, generated.rates
     return positions.copy(), rates.copy()
 
 

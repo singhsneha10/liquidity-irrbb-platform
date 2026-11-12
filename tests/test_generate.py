@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -18,12 +19,12 @@ def generated(cfg):
 
 @pytest.fixture(scope="module")
 def positions(generated):
-    return generated[0]
+    return generated.positions
 
 
 @pytest.fixture(scope="module")
 def rates(generated):
-    return generated[1]
+    return generated.rates
 
 
 def test_output_passes_both_contracts(cfg, positions, rates):
@@ -54,15 +55,14 @@ def test_every_entity_currency_category_is_present(cfg, positions):
 
 
 def test_same_config_gives_identical_data(cfg, positions, rates):
-    again_positions, again_rates = generate(cfg)
-    pd.testing.assert_frame_equal(positions, again_positions)
-    pd.testing.assert_frame_equal(rates, again_rates)
+    again = generate(cfg)
+    pd.testing.assert_frame_equal(positions, again.positions)
+    pd.testing.assert_frame_equal(rates, again.rates)
 
 
 def test_different_seed_gives_different_data(cfg, positions):
     other = GeneratorConfig.model_validate({**cfg.model_dump(), "seed": cfg.seed + 1})
-    other_positions, _ = generate(other)
-    assert not positions["balance_mn"].equals(other_positions["balance_mn"])
+    assert not positions["balance_mn"].equals(generate(other).positions["balance_mn"])
 
 
 def test_balances_move_gradually(positions):
@@ -139,8 +139,8 @@ def test_curves_move_in_parallel_and_slope_upward(cfg, rates):
     assert np.allclose(slope, slope.iloc[0])
 
 
-def test_write_outputs_round_trips(cfg, positions, rates, tmp_path):
-    write_outputs(positions, rates, tmp_path)
+def test_write_outputs_round_trips(cfg, generated, positions, rates, tmp_path):
+    write_outputs(generated, tmp_path)
     files = sorted((tmp_path / "positions").glob("date=*.parquet"))
     assert len(files) == cfg.n_days
     back_positions = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
@@ -149,11 +149,11 @@ def test_write_outputs_round_trips(cfg, positions, rates, tmp_path):
     pd.testing.assert_frame_equal(back_rates, rates, check_dtype=False)
 
 
-def test_rerun_removes_stale_files(cfg, positions, rates, tmp_path):
-    write_outputs(positions, rates, tmp_path)
+def test_rerun_removes_stale_files(cfg, generated, tmp_path):
+    write_outputs(generated, tmp_path)
     stale = tmp_path / "positions" / "date=1999-01-01.parquet"
     stale.write_bytes(b"old")
-    write_outputs(positions, rates, tmp_path)
+    write_outputs(generated, tmp_path)
     assert not stale.exists()
     assert len(list((tmp_path / "positions").glob("date=*.parquet"))) == cfg.n_days
 
@@ -213,7 +213,7 @@ def _rate_on(rates, currency, day, tenor):
 
 def test_real_curves_are_laid_on_the_tenor_grid(cfg, tmp_path):
     real = _real_cfg(cfg, _write_curves(cfg, tmp_path / "curves.parquet"))
-    _, rates = generate(real)
+    rates = generate(real).rates
     day = "2026-08-05"
     d = list(CURVE_DAYS).index(pd.Timestamp(day))
     for c, currency in enumerate(cfg.currencies):
@@ -224,7 +224,7 @@ def test_real_curves_are_laid_on_the_tenor_grid(cfg, tmp_path):
 
 def test_real_curve_missing_on_a_holiday_uses_the_previous_day(cfg, tmp_path):
     path = _write_curves(cfg, tmp_path / "curves.parquet", drop=[("GBP", "2026-08-10")])
-    _, rates = generate(_real_cfg(cfg, path))
+    rates = generate(_real_cfg(cfg, path)).rates
     assert _rate_on(rates, "GBP", "2026-08-10", 1.0) == _rate_on(rates, "GBP", "2026-08-07", 1.0)
     assert _rate_on(rates, "USD", "2026-08-10", 1.0) != _rate_on(rates, "USD", "2026-08-07", 1.0)
 
@@ -246,3 +246,40 @@ def test_real_curves_missing_a_currency_is_an_error(cfg, tmp_path):
 def test_real_mode_without_saved_file_explains_how_to_get_it(cfg, tmp_path):
     with pytest.raises(FileNotFoundError, match="market_rates"):
         generate(_real_cfg(cfg, tmp_path / "missing.parquet"))
+
+
+# --- FX rates -------------------------------------------------------------------------------
+
+
+def test_fx_has_one_rate_per_date_and_currency(cfg, generated):
+    fx = generated.fx
+    assert len(fx) == cfg.n_days * len(cfg.currencies)
+    assert not fx.duplicated(["date", "currency"]).any()
+
+
+def test_fx_starts_at_config_and_reporting_currency_is_one(cfg, generated):
+    fx = generated.fx
+    first = fx[fx["date"] == fx["date"].min()].set_index("currency")["to_reporting"]
+    for currency, rate in cfg.fx.start_to_reporting.items():
+        assert first[currency] == rate
+    assert (fx.loc[fx["currency"] == cfg.fx.reporting_currency, "to_reporting"] == 1.0).all()
+
+
+def test_fx_stays_positive_and_moves_gently(generated):
+    fx = generated.fx.sort_values(["currency", "date"])
+    assert (fx["to_reporting"] > 0).all()
+    daily = fx.groupby("currency")["to_reporting"].pct_change().abs()
+    assert daily.max() < 0.05
+
+
+def test_same_config_gives_identical_fx(cfg, generated):
+    pd.testing.assert_frame_equal(generated.fx, generate(cfg).fx)
+
+
+def test_fx_is_written_with_control_totals(generated, tmp_path):
+    write_outputs(generated, tmp_path)
+    pd.testing.assert_frame_equal(
+        pd.read_parquet(tmp_path / "fx.parquet"), generated.fx, check_dtype=False
+    )
+    control = json.loads((tmp_path / "control_totals.json").read_text(encoding="utf-8"))
+    assert control["files"]["fx.parquet"] == {"table": "fx", "rows": len(generated.fx)}

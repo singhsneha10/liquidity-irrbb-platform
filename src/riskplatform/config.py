@@ -80,6 +80,20 @@ class RatesConfig(_Strict):
         return self
 
 
+class FxConfig(_Strict):
+    """Synthetic FX: reporting currency per one unit of each other currency, as a random walk."""
+
+    reporting_currency: str
+    start_to_reporting: dict[str, float]
+    daily_vol: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _check_rates(self) -> "FxConfig":
+        if any(rate <= 0 for rate in self.start_to_reporting.values()):
+            raise ValueError("fx.start_to_reporting rates must be above 0")
+        return self
+
+
 class GeneratorConfig(_Strict):
     seed: int
     start_date: date
@@ -96,6 +110,7 @@ class GeneratorConfig(_Strict):
     daily_balance_drift: float
     daily_balance_vol: float = Field(ge=0)
     rates: RatesConfig
+    fx: FxConfig
 
     @property
     def entity_names(self) -> list[str]:
@@ -128,6 +143,15 @@ class GeneratorConfig(_Strict):
                 f"got {sorted(self.rates.curves)}"
             )
         _check_day_range("floating_reprice_days", self.floating_reprice_days)
+        reporting = self.fx.reporting_currency
+        if reporting not in self.currencies:
+            raise ValueError(f"fx.reporting_currency {reporting} is not in {self.currencies}")
+        others = set(self.currencies) - {reporting}
+        if set(self.fx.start_to_reporting) != others:
+            raise ValueError(
+                f"fx.start_to_reporting must give exactly {sorted(others)}, "
+                f"got {sorted(self.fx.start_to_reporting)}"
+            )
         return self
 
 
@@ -178,6 +202,130 @@ class QualityConfig(_Strict):
 def load_quality_config(path: str | Path) -> QualityConfig:
     """Read a YAML file and return a validated QualityConfig."""
     return QualityConfig.model_validate(_read_yaml(path))
+
+
+HqlaLevel = Literal["1", "1_covered", "2A", "2B"]  # 1_covered: UK Level 1 covered bonds
+Regime = Literal["basel", "pra"]
+
+
+class Referenced(_Strict):
+    """A regulatory parameter and the paragraph or Article it comes from."""
+
+    value: float
+    ref: str
+
+
+class HqlaTreatment(_Strict):
+    level: HqlaLevel
+    haircut: float = Field(ge=0, lt=1)
+    ref: str
+    assumption: str | None = None
+
+
+class FlowTreatment(_Strict):
+    """An LCR outflow or inflow rate; within_horizon_only counts only amounts due in 30 days."""
+
+    rate: float = Field(ge=0, le=1)
+    within_horizon_only: bool
+    ref: str
+    assumption: str | None = None
+
+
+class FactorBand(_Strict):
+    """An NSFR factor for residual maturities below below_days (None: everything longer)."""
+
+    below_days: int | None = Field(default=None, gt=0)
+    factor: float = Field(ge=0, le=1)
+    ref: str
+    assumption: str | None = None
+
+
+def _check_bands(label: str, bands: list[FactorBand]) -> None:
+    """Every maturity must fall in exactly one band: rising limits, only the last open-ended."""
+    limits = [band.below_days for band in bands]
+    if not bands or limits[-1] is not None or None in limits[:-1]:
+        raise ValueError(f"{label}: only the last band may (and must) have no below_days")
+    if any(later <= earlier for earlier, later in itertools.pairwise(limits[:-1])):
+        raise ValueError(f"{label}: below_days must rise strictly")
+
+
+class LcrRules(_Strict):
+    horizon_days: Referenced
+    minimum: Referenced
+    inflow_cap: Referenced
+    level2_cap: Referenced
+    level2b_cap: Referenced
+    level1_covered_bond_cap: Referenced | None
+    hqla: dict[str, HqlaTreatment]
+    outflows: dict[str, FlowTreatment]
+    inflows: dict[str, FlowTreatment]
+
+    @model_validator(mode="after")
+    def _check(self) -> "LcrRules":
+        both = set(self.hqla) & set(self.inflows)
+        if both:  # maturing HQLA are not inflows (LCR40.88; UK LCR Art 32(6))
+            raise ValueError(f"categories cannot be both HQLA and inflows: {sorted(both)}")
+        covered = any(t.level == "1_covered" for t in self.hqla.values())
+        if covered != (self.level1_covered_bond_cap is not None):
+            raise ValueError("Level 1 covered bonds and level1_covered_bond_cap go together")
+        return self
+
+
+class NsfrRules(_Strict):
+    minimum: Referenced
+    asf: dict[str, list[FactorBand]]
+    rsf: dict[str, list[FactorBand]]
+
+    @model_validator(mode="after")
+    def _check(self) -> "NsfrRules":
+        if "equity" not in self.asf:
+            raise ValueError("nsfr.asf must include 'equity' (capital counts as stable funding)")
+        for side, table in (("asf", self.asf), ("rsf", self.rsf)):
+            for category, bands in table.items():
+                _check_bands(f"nsfr.{side}.{category}", bands)
+        return self
+
+
+class LiquidityRules(_Strict):
+    """One regulatory rulebook's LCR and NSFR parameters (config/liquidity/<regime>.yaml)."""
+
+    regime: Regime
+    name: str
+    lcr: LcrRules
+    nsfr: NsfrRules
+
+
+def load_liquidity_rules(path: str | Path) -> LiquidityRules:
+    """Read a YAML file and return validated LiquidityRules."""
+    return LiquidityRules.model_validate(_read_yaml(path))
+
+
+class LadderBucket(_Strict):
+    label: str
+    up_to_days: int | None = Field(default=None, gt=0)  # last day included; None: open-ended
+
+
+class LadderConfig(_Strict):
+    """Maturity ladder buckets (config/liquidity/ladder.yaml)."""
+
+    buckets: list[LadderBucket] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check_buckets(self) -> "LadderConfig":
+        limits = [bucket.up_to_days for bucket in self.buckets]
+        if limits[-1] is not None or None in limits[:-1]:
+            raise ValueError("only the last ladder bucket may (and must) be open-ended")
+        if any(later <= earlier for earlier, later in itertools.pairwise(limits[:-1])):
+            raise ValueError("ladder up_to_days must rise strictly")
+        labels = [bucket.label for bucket in self.buckets]
+        if len(set(labels)) != len(labels):
+            raise ValueError("ladder bucket labels must be unique")
+        return self
+
+
+def load_ladder_config(path: str | Path) -> LadderConfig:
+    """Read a YAML file and return a validated LadderConfig."""
+    return LadderConfig.model_validate(_read_yaml(path))
 
 
 class SeriesSource(_Strict):

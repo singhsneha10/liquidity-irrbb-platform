@@ -24,7 +24,7 @@ def generated(cfg):
 @pytest.fixture
 def day(generated):
     """One clean day of positions, as one raw file holds it (a fresh copy for each test)."""
-    positions = generated[0]
+    positions = generated.positions
     first = positions[positions["date"] == positions["date"].min()]
     return first.reset_index(drop=True).astype({"balance_mn": object})  # object: may hold text
 
@@ -116,7 +116,7 @@ def test_missing_or_extra_column_stops_the_run(cfg, day, change):
 
 
 def test_rates_table_is_validated_the_same_way(cfg, generated):
-    rates = generated[1].reset_index(drop=True)
+    rates = generated.rates.reset_index(drop=True)
     rates.loc[2, "rate"] = 0.9  # 90%: outside the allowed range
     result = _validate(cfg, rates, schema=rates_schema(cfg), table="rates")
     record = _only_record(result)

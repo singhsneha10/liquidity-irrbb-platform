@@ -6,6 +6,7 @@ import pytest
 from riskplatform.controls import file_totals, read_control_totals, write_control_totals
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.quality.reconcile import ReconciliationFailed, reconcile
+from riskplatform.quality.report import table_of
 
 FIRST_DAY = "positions/date=2026-08-03.parquet"
 
@@ -17,7 +18,7 @@ def generated(cfg):
 
 @pytest.fixture
 def raw_dir(generated, tmp_path):
-    write_outputs(*generated, tmp_path)
+    write_outputs(generated, tmp_path)
     return tmp_path
 
 
@@ -107,10 +108,7 @@ def test_bad_value_sent_by_the_source_reconciles(raw_dir):
     arrived = _read_raw(raw_dir)
     arrived[FIRST_DAY] = arrived[FIRST_DAY].astype({"balance_mn": object})
     arrived[FIRST_DAY].loc[0, "balance_mn"] = "abc"
-    sent = {
-        name: ("rates" if name == "rates.parquet" else "positions", frame)
-        for name, frame in arrived.items()
-    }
+    sent = {name: (table_of(name), frame) for name, frame in arrived.items()}
     write_control_totals(raw_dir, sent)
     reconcile(read_control_totals(raw_dir), arrived, validated=arrived)  # no failure
 

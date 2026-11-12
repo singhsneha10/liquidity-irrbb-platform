@@ -151,17 +151,17 @@ def run_demo(cfg: GeneratorConfig, quality_cfg: QualityConfig, out_dir: str | Pa
     """Run both scenarios under out_dir (cleared first) and score every planted error."""
     out_dir = Path(out_dir)
     _fresh_demo_folder(out_dir)
-    positions, rates = generate(cfg)
+    raw = generate(cfg)
 
     bad_raw = out_dir / "bad_data" / "raw"
-    write_outputs(positions, rates, bad_raw)
+    write_outputs(raw, bad_raw)
     day = _day_file(bad_raw).stem.removeprefix("date=")
     _plant_errors(bad_raw)
     _resend_control_totals(bad_raw)
     bad_run = run_quality(bad_raw, out_dir / "bad_data", cfg, quality_cfg)
 
     lost_raw = out_dir / "lost_data" / "raw"
-    write_outputs(positions, rates, lost_raw)
+    write_outputs(raw, lost_raw)
     path = _day_file(lost_raw)
     pd.read_parquet(path).iloc[1:].to_parquet(path, index=False)  # control totals not resent
     lost_run = run_quality(lost_raw, out_dir / "lost_data", cfg, quality_cfg)

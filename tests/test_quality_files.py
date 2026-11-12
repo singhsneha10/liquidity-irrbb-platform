@@ -29,8 +29,8 @@ def _with_filenames(positions: pd.DataFrame) -> pd.DataFrame:
 
 @pytest.fixture
 def tables(generated):
-    positions, rates = generated
-    return _with_filenames(positions), rates.copy()
+    """(positions with filenames, rates, fx): fresh copies for each test."""
+    return _with_filenames(generated.positions), generated.rates.copy(), generated.fx.copy()
 
 
 def _nth_date(frame: pd.DataFrame, n: int) -> pd.Timestamp:
@@ -46,9 +46,11 @@ def _change(frame, column, value, **match):
 
 
 def test_checks_on_tables_match_checks_on_files(cfg, generated, tmp_path):
-    write_outputs(*generated, tmp_path)
+    write_outputs(generated, tmp_path)
     on_files = run_checks(tmp_path, cfg)
-    on_tables = run_checks_on_tables(_with_filenames(generated[0]), generated[1], cfg)
+    on_tables = run_checks_on_tables(
+        _with_filenames(generated.positions), generated.rates, generated.fx, cfg
+    )
     assert on_tables == on_files
 
 
@@ -59,34 +61,46 @@ def test_clean_data_passes_every_stop_and_warning_check(cfg, tables):
     assert all(r.passed for r in report.stops + report.warnings)
 
 
-def _wrong_file_name(positions, rates):
+# Each fault takes (positions, rates, fx) and returns the damaged (positions, rates, fx).
+
+
+def _wrong_file_name(positions, rates, fx):
+    _change(
+        positions, "filename", "positions/date=2030-01-01.parquet", date=_nth_date(positions, 3)
+    )
+    return positions, rates, fx
+
+
+def _missing_day(positions, rates, fx):
     day = _nth_date(positions, 3)
-    _change(positions, "filename", "positions/date=2030-01-01.parquet", date=day)
+    return tuple(frame[frame["date"] != day] for frame in (positions, rates, fx))
 
 
-def _missing_day(positions, rates):
-    day = _nth_date(positions, 3)
-    return positions[positions["date"] != day], rates[rates["date"] != day]
+def _rates_missing_a_day(positions, rates, fx):
+    return positions, rates[rates["date"] != _nth_date(rates, 3)], fx
 
 
-def _rates_missing_a_day(positions, rates):
-    return positions, rates[rates["date"] != _nth_date(rates, 3)]
+def _fx_missing_a_rate(positions, rates, fx):
+    gone = (fx["currency"] == "USD") & (fx["date"] == _nth_date(fx, 3))
+    return positions, rates, fx[~gone]
 
 
 STOP_FAULTS = {
     "files_hold_their_own_date": _wrong_file_name,
     "day_count_matches_config": _missing_day,
     "positions_and_rates_share_dates": _rates_missing_a_day,
+    "fx_covers_every_date": _fx_missing_a_rate,
 }
+
+
+def test_every_stop_check_has_a_planted_fault():
+    assert set(STOP_FAULTS) == set(STOP_CHECKS)
 
 
 @pytest.mark.parametrize("check", list(STOP_FAULTS))
 def test_stop_check_failure_stops_the_run(cfg, tables, check):
-    positions, rates = tables
-    changed = STOP_FAULTS[check](positions, rates)
-    positions, rates = changed if changed is not None else (positions, rates)
     with pytest.raises(FileChecksFailed, match=check) as stopped:
-        check_files(positions, rates, cfg)
+        check_files(*STOP_FAULTS[check](*tables), cfg)
     assert isinstance(stopped.value, FileLevelError)  # the run catches every stop in one place
 
 
@@ -99,27 +113,27 @@ WARNING_FAULTS = {
 
 @pytest.mark.parametrize("check", list(WARNING_FAULTS))
 def test_warning_check_failure_is_reported_but_does_not_stop(cfg, tables, check):
-    positions, rates = tables
+    positions, rates, fx = tables
     column, value = WARNING_FAULTS[check]
     _change(positions, column, value, position_id=BOND, date=_nth_date(positions, 5))
-    report = check_files(positions, rates, cfg)
+    report = check_files(positions, rates, fx, cfg)
     failed = [r.name for r in report.warnings if not r.passed]
     assert failed == [check]
     assert all(r.passed for r in report.stops)
 
 
 def test_quarantined_row_neither_stops_nor_warns(cfg, tables):
-    positions, rates = tables
+    positions, rates, fx = tables
     gone = (positions["position_id"] == BOND) & (positions["date"] == _nth_date(positions, 5))
-    report = check_files(positions[~gone], rates, cfg)
+    report = check_files(positions[~gone], rates, fx, cfg)
     assert all(r.passed for r in report.stops + report.warnings)
 
 
 def test_stopped_run_still_carries_the_warnings(cfg, tables):
-    positions, rates = tables
+    positions, rates, fx = tables
     _change(positions, "category", "covered_bonds", position_id=BOND, date=_nth_date(positions, 5))
     with pytest.raises(FileChecksFailed) as stopped:
-        check_files(*_missing_day(positions, rates), cfg)
+        check_files(*_missing_day(positions, rates, fx), cfg)
     warnings = {r.name: r.passed for r in stopped.value.report.warnings}
     assert warnings["static_attributes_unchanged"] is False
 

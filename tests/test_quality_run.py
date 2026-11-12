@@ -37,7 +37,7 @@ def generated(small_cfg):
 @pytest.fixture
 def raw_dir(generated, tmp_path):
     raw = tmp_path / "raw"
-    write_outputs(*generated, raw)
+    write_outputs(generated, raw)
     return raw
 
 
@@ -77,7 +77,12 @@ def test_clean_run_publishes_everything(raw_dir, small_cfg, quality_cfg, generat
     assert len(list((validated / "positions").glob("*.parquet"))) == small_cfg.n_days
     assert _manifest(raw_dir)["run_id"] == result.run_id
     rows = result.report["rows"]
-    assert rows["validated"] == {"positions": len(generated[0]), "rates": len(generated[1])}
+    assert rows["validated"] == {
+        "positions": len(generated.positions),
+        "rates": len(generated.rates),
+        "fx": len(generated.fx),
+    }
+    assert (validated / "fx.parquet").exists()
     assert rows["quarantined"] == 0
     assert pd.read_parquet(result.run_dir / "quarantine.parquet").empty
     assert "**Status: PUBLISHED**" in _markdown(result)
@@ -100,7 +105,7 @@ def test_bad_rows_from_the_source_are_quarantined_and_the_run_publishes(
     assert result.status == "published"
     report = result.report
     assert report["rows"]["quarantined"] == 2
-    assert report["rows"]["validated"]["positions"] == len(generated[0]) - 2
+    assert report["rows"]["validated"]["positions"] == len(generated.positions) - 2
     checks = {(c["check"], c["column"]) for c in report["quarantine_by_check"]}
     assert checks == {
         ("greater_than(0)", "balance_mn"),
@@ -173,3 +178,29 @@ def test_command_exit_codes(raw_dir, small_cfg, tmp_path):
     assert main(args) == 0
     (raw_dir / CONTROL_FILE).unlink()
     assert main(args) == 1
+
+
+def test_bad_fx_rate_is_quarantined_and_the_missing_rate_stops_the_run(
+    raw_dir, small_cfg, quality_cfg
+):
+    def negative_usd_rate(frame):
+        frame = frame.copy()
+        frame.loc[frame.index[frame["currency"] == "USD"][1], "to_reporting"] = -0.74
+        return frame
+
+    _edit(raw_dir, "fx.parquet", negative_usd_rate)
+    _resend_control_totals(raw_dir)  # the source sent this rate
+    result = _run(raw_dir, small_cfg, quality_cfg)
+
+    checks = {(c["table"], c["check"]) for c in result.report["quarantine_by_check"]}
+    assert ("fx", "greater_than(0)") in checks  # the bad row is quarantined ...
+    assert result.status == "stopped"  # ... which leaves USD without a rate that day
+    stops = {c["name"]: c["passed"] for c in result.report["file_checks"]["stops"]}
+    assert stops["fx_covers_every_date"] is False
+
+
+def test_missing_fx_file_stops_the_run(raw_dir, small_cfg, quality_cfg):
+    (raw_dir / "fx.parquet").unlink()
+    result = _run(raw_dir, small_cfg, quality_cfg)
+    assert result.status == "stopped"
+    assert any("fx.parquet missing" in reason for reason in result.report["stop_reasons"])

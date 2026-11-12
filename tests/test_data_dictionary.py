@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from riskplatform.schemas import market_curves_schema, positions_schema, rates_schema
+from riskplatform.schemas import fx_schema, market_curves_schema, positions_schema, rates_schema
 
 DICTIONARY_PATH = Path(__file__).resolve().parents[1] / "docs" / "data_dictionary.md"
 
@@ -38,6 +38,7 @@ def _documented(section: str, table: str) -> list[str]:
         ("1. Positions", positions_schema),
         ("2. Market rates", rates_schema),
         ("3. Saved real curves", lambda cfg: market_curves_schema(cfg.currencies)),
+        ("4. FX rates", fx_schema),
     ],
 )
 def test_dictionary_lists_exactly_the_schema_columns(cfg, section, make_schema):

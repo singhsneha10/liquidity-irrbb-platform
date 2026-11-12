@@ -46,7 +46,7 @@ class ReconciliationFailed(FileLevelError):
 
     def __init__(self, problems: list[str], reconciliation: Reconciliation):
         self.reconciliation = reconciliation
-        super().__init__("positions and rates", "control totals", problems)
+        super().__init__("all raw tables", "control totals", problems)
 
 
 def _balances(totals: dict, column: str) -> pd.DataFrame:

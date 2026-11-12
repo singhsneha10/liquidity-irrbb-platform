@@ -6,6 +6,7 @@ Run it with:  python -m riskplatform.ingestion.generate
 
 import argparse
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +14,12 @@ import pandas as pd
 
 from riskplatform.config import GeneratorConfig, load_generator_config
 from riskplatform.controls import write_control_totals
-from riskplatform.schemas import market_curves_schema, positions_schema, rates_schema
+from riskplatform.schemas import (
+    fx_schema,
+    market_curves_schema,
+    positions_schema,
+    rates_schema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -250,11 +256,44 @@ def build_rates(cfg: GeneratorConfig, dates: pd.DatetimeIndex, curves: np.ndarra
     return pd.concat(frames, ignore_index=True)
 
 
-def generate(cfg: GeneratorConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build positions and rates from a config, checked against the data contracts."""
+def build_fx(
+    cfg: GeneratorConfig, dates: pd.DatetimeIndex, rng: np.random.Generator
+) -> pd.DataFrame:
+    """Daily FX rates (one row per date and currency), reporting currency per unit of currency.
+
+    Each rate starts at its configured value and moves by a daily random percentage, so it can
+    never turn negative. Day one has no move. The reporting currency's rate is 1 on every date.
+    """
+    fx_cfg = cfg.fx
+    steps = rng.normal(0.0, fx_cfg.daily_vol, (len(dates), len(cfg.currencies)))
+    steps[0] = 0.0
+    paths = np.cumprod(1.0 + steps, axis=0)
+    frames = []
+    for j, currency in enumerate(cfg.currencies):
+        if currency == fx_cfg.reporting_currency:
+            rate = np.ones(len(dates))
+        else:
+            rate = fx_cfg.start_to_reporting[currency] * paths[:, j]
+        frames.append(pd.DataFrame({"date": dates, "currency": currency, "to_reporting": rate}))
+    return pd.concat(frames, ignore_index=True)
+
+
+@dataclass(frozen=True)
+class RawData:
+    """Everything the generator produces: the raw layer's three tables."""
+
+    positions: pd.DataFrame
+    rates: pd.DataFrame
+    fx: pd.DataFrame
+
+
+def generate(cfg: GeneratorConfig) -> RawData:
+    """Build positions, rates and FX from a config, checked against the data contracts."""
     # Independent random streams, so changing one part never shifts the others' numbers.
-    seeds = np.random.SeedSequence(cfg.seed).spawn(3)
-    book_rng, path_rng, rates_rng = (np.random.default_rng(s) for s in seeds)
+    # spawn(4)'s first three streams are the same as spawn(3)'s, so adding FX left the
+    # existing positions and rates unchanged.
+    seeds = np.random.SeedSequence(cfg.seed).spawn(4)
+    book_rng, path_rng, rates_rng, fx_rng = (np.random.default_rng(s) for s in seeds)
 
     dates = pd.bdate_range(start=pd.Timestamp(cfg.start_date), periods=cfg.n_days)
     if cfg.rates.source == "real":
@@ -265,11 +304,13 @@ def generate(cfg: GeneratorConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
     positions = build_positions(cfg, book, dates, curves, path_rng)
     positions = positions_schema(cfg).validate(positions)
     rates = rates_schema(cfg).validate(build_rates(cfg, dates, curves))
-    return positions, rates
+    # Real-mode FX (saved Bank of England rates) comes in a later step; synthetic until then.
+    fx = fx_schema(cfg).validate(build_fx(cfg, dates, fx_rng))
+    return RawData(positions=positions, rates=rates, fx=fx)
 
 
-def write_outputs(positions: pd.DataFrame, rates: pd.DataFrame, out_dir: Path) -> None:
-    """Write one positions file per date, a rates file and their control totals.
+def write_outputs(raw: RawData, out_dir: Path) -> None:
+    """Write one positions file per date, a rates file, an FX file and their control totals.
 
     Safe to run repeatedly: stale position files are removed and the control file is replaced.
     """
@@ -279,12 +320,13 @@ def write_outputs(positions: pd.DataFrame, rates: pd.DataFrame, out_dir: Path) -
     for stale in positions_dir.glob("date=*.parquet"):
         stale.unlink()
     sent = {}  # relative path -> (table, frame), for the control totals
-    for day, frame in positions.groupby("date"):
+    for day, frame in raw.positions.groupby("date"):
         name = f"date={day:%Y-%m-%d}.parquet"
         frame.to_parquet(positions_dir / name, index=False)
         sent[f"positions/{name}"] = ("positions", frame)
-    rates.to_parquet(out_dir / "rates.parquet", index=False)
-    sent["rates.parquet"] = ("rates", rates)
+    for table, frame in (("rates", raw.rates), ("fx", raw.fx)):
+        frame.to_parquet(out_dir / f"{table}.parquet", index=False)
+        sent[f"{table}.parquet"] = (table, frame)
     # Like a source system, send control totals with the files (see riskplatform.controls).
     write_control_totals(out_dir, sent)
 
@@ -297,13 +339,14 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_generator_config(args.config)
-    positions, rates = generate(cfg)
-    write_outputs(positions, rates, args.out)
+    raw = generate(cfg)
+    write_outputs(raw, args.out)
     logger.info(
-        "Wrote %d position rows over %d days and %d rate rows to %s",
-        len(positions),
+        "Wrote %d position rows over %d days, %d rate rows and %d FX rows to %s",
+        len(raw.positions),
         cfg.n_days,
-        len(rates),
+        len(raw.rates),
+        len(raw.fx),
         args.out,
     )
 

@@ -28,6 +28,13 @@ rates:
     USD: {short_rate: 0.0425, long_rate: 0.0475}
     EUR: {short_rate: 0.0200, long_rate: 0.0300}
 
+# Synthetic FX rates (real mode reads saved Bank of England rates instead). Each rate is the
+# reporting currency per one unit of the currency; it moves by a daily random percentage.
+fx:
+  reporting_currency: GBP  # group totals are reported in this currency
+  start_to_reporting: {USD: 0.74, EUR: 0.86}  # GBP per 1 USD / 1 EUR on day one
+  daily_vol: 0.004  # about 0.4% a day
+
 categories:
   - {name: central_bank_reserves,    side: asset,             n_positions: 1,  mean_balance_mn: 1000, rate_type: floating, tenor_days: [1, 1], spread: 0.0}
   - {name: govt_bonds,               side: asset,             n_positions: 15, mean_balance_mn: 150,  rate_type: fixed,    tenor_days: [90, 3650], spread: 0.0}

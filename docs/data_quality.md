@@ -29,7 +29,7 @@ react. Settings: `config/generator.yaml` (the contract's allowed values) and
 
 | # | Stage | Code | On a problem |
 |---|---|---|---|
-| 1 | Read every raw file and the source's control totals | `quality/run.py` | Unreadable file, no files or no control totals: **stop** |
+| 1 | Read every raw file (positions per day, `rates.parquet`, `fx.parquet`) and the source's control totals | `quality/run.py` | Unreadable or missing file, or no control totals: **stop** |
 | 2 | Row validation, file by file, against the data contract | `quality/rows.py` | Row problems: **quarantine** and continue; missing or extra column: **stop** |
 | 3 | Reconciliation to the control totals | `quality/reconcile.py` | Data lost or changed after sending: **stop** |
 | 4 | File-level checks on the validated rows | `quality/files.py` | STOP checks: **stop**; WARNING checks: **warn** |
@@ -71,7 +71,7 @@ receiver calculate totals with the same function.
 
 | Group | Checks | Effect |
 |---|---|---|
-| STOP | files hold only their own date; expected number of days; positions and rates cover the same dates | The run stops |
+| STOP | files hold only their own date; expected number of days; positions and rates cover the same dates; an FX rate for every currency on every date (`fx_covers_every_date`) | The run stops |
 | WARNING | attributes never change; countdowns fall by calendar days; rate changes only at a reset | Listed in the breaks report |
 | Generator only | every position every day; balance sheet balances on day one; curve shape and parallel moves | Not run here; they verify the synthetic generator (`riskplatform.validation.check_raw`) |
 
@@ -147,7 +147,7 @@ record per failed check. A record that breaks two rules appears twice.
 |---|---|---|---|
 | `run_id` | string | | ID of the quality run that quarantined the record. |
 | `run_at` | datetime (UTC) | | When that run started. |
-| `table` | string | `positions` or `rates` | Which raw table the record came from. |
+| `table` | string | `positions`, `rates` or `fx` | Which raw table the record came from. |
 | `source_file` | string | | The raw file, relative to the raw folder. |
 | `row_number` | integer | >= 0 | Position of the record in its source file (0 = first row). |
 | `check` | string | | Name of the failed check, e.g. `greater_than(0)`. |
