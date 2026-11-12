@@ -33,6 +33,9 @@ Calculations are verified separately from the data (published examples and hand 
 - Rates are synthetic yield curves that move in parallel (simplification). A real-rates adapter
   (FRED / Bank of England) can be added later.
 - Same seed + same config = identical data.
+- `venv/` is not tracked by Git (it only works on the machine that built it); each machine
+  builds its own. GitHub Actions CI (`.github/workflows/ci.yml`) runs `ruff check .` and
+  `pytest` on a clean machine on every push and pull request.
 
 ## Stack plan (proposed, not yet built)
 Python, Parquet, DuckDB; pandera for quality; unit-tested pure calculation functions;
@@ -42,7 +45,7 @@ AWS deployment; run audit trail; optional LLM-written risk commentary (numbers c
 ## Status
 | Phase | Status |
 |---|---|
-| 0. Setup | Done |
+| 0. Setup | Done (CI added; venv untracked) |
 | 1. Domain learning | Done (formulas get a worked-example pass in Phases 4-5) |
 | 2. Synthetic data | 2.1 config, 2.2 data contract, 2.3 generator: done and pushed. 2.4 pending |
 | 3. Data quality layer | Not started |
@@ -51,9 +54,8 @@ AWS deployment; run audit trail; optional LLM-written risk commentary (numbers c
 | 6-10. Testing, cloud, dashboard, validation, deploy | Not started |
 
 ## Next steps
-1. Add GitHub Actions CI (tests and lint on every push).
-2. Phase 2.4: data dictionary in `docs/` and an independent check of the generated files.
-3. Walk through the code in plain words, one piece at a time (starting with `generator.yaml`).
+1. Phase 2.4: data dictionary in `docs/` and an independent check of the generated files.
+2. Walk through the code in plain words, one piece at a time (starting with `generator.yaml`).
 
 ## Walkthrough debt (code written but not yet explained line by line to the author)
 - `config/generator.yaml` and `src/riskplatform/config.py`
@@ -61,11 +63,20 @@ AWS deployment; run audit trail; optional LLM-written risk commentary (numbers c
 - `src/riskplatform/ingestion/generate.py` (build_book, _balance_sheet, build_positions,
   build_rates, write_outputs, main)
 - `tests/` (conftest, test_config, test_schemas, test_generate)
+- (`.github/workflows/ci.yml` was explained line by line when it was added.)
 
 ## How to run
+First time on a new machine (builds the local venv):
+```
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+```
+Every time:
 ```
 .\venv\Scripts\Activate.ps1
 pytest
+ruff check .
 python -m riskplatform.ingestion.generate
 ```
 Data is written to `data/raw/` (ignored by Git).
