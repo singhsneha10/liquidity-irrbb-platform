@@ -10,10 +10,12 @@ Run with:  python -m riskplatform.validation.check_raw
 
 import argparse
 import sys
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
 import duckdb
+import pandas as pd
 
 from riskplatform.config import GeneratorConfig, load_generator_config
 
@@ -174,19 +176,13 @@ def _sql_path(path: Path) -> str:
     return "'" + path.as_posix().replace("'", "''") + "'"
 
 
-def _load(con: duckdb.DuckDBPyConnection, raw_dir: Path, cfg: GeneratorConfig) -> None:
-    """Expose the raw files and the config values as tables the checks can query."""
-    positions_glob = _sql_path(raw_dir / "positions" / "date=*.parquet")
-    con.execute(f"""
-        CREATE VIEW positions AS
-        SELECT * REPLACE (CAST(date AS DATE) AS date)
-        FROM read_parquet({positions_glob}, filename = true)
-    """)
-    con.execute(f"""
-        CREATE VIEW rates AS
-        SELECT * REPLACE (CAST(date AS DATE) AS date)
-        FROM read_parquet({_sql_path(raw_dir / "rates.parquet")})
-    """)
+def _view(con: duckdb.DuckDBPyConnection, name: str, source_sql: str) -> None:
+    """Create a view the checks query, with timestamps turned into plain dates."""
+    con.execute(f"CREATE VIEW {name} AS SELECT * REPLACE (CAST(date AS DATE) AS date) {source_sql}")
+
+
+def _load_config(con: duckdb.DuckDBPyConnection, cfg: GeneratorConfig) -> None:
+    """Expose the config values the checks compare against as small tables."""
     con.execute(
         "CREATE TABLE settings AS SELECT ? AS n_days, ? AS equity_ratio, ? AS curve_decay_years",
         [cfg.n_days, cfg.equity_ratio, cfg.rates.curve_decay_years],
@@ -198,20 +194,56 @@ def _load(con: duckdb.DuckDBPyConnection, raw_dir: Path, cfg: GeneratorConfig) -
     )
 
 
-def run_checks(raw_dir: str | Path, cfg: GeneratorConfig) -> list[CheckResult]:
-    """Run every check against the raw files in raw_dir and return one result per check."""
+def _run(
+    con: duckdb.DuckDBPyConnection, cfg: GeneratorConfig, only: Collection[str] | None
+) -> list[CheckResult]:
+    """Run the checks (all, or only the named ones) and return one result per check."""
+    unknown = set(only or ()) - set(CHECKS)
+    if unknown:
+        raise ValueError(f"unknown checks: {sorted(unknown)}")
+    _load_config(con, cfg)
     results = []
-    with duckdb.connect() as con:  # in-memory database, gone when the block ends
-        _load(con, Path(raw_dir), cfg)
-        for name, sql in CHECKS.items():
-            if name in SYNTHETIC_ONLY and cfg.rates.source != "synthetic":
-                results.append(CheckResult(name, failures=0, skipped=True))
-                continue
-            params = {key: value for key, value in _TOLERANCES.items() if f"${key}" in sql}
-            count_sql = f"SELECT count(*) FROM ({sql})"
-            (failures,) = con.execute(count_sql, params).fetchone()
-            results.append(CheckResult(name, failures))
+    for name, sql in CHECKS.items():
+        if only is not None and name not in only:
+            continue
+        if name in SYNTHETIC_ONLY and cfg.rates.source != "synthetic":
+            results.append(CheckResult(name, failures=0, skipped=True))
+            continue
+        params = {key: value for key, value in _TOLERANCES.items() if f"${key}" in sql}
+        (failures,) = con.execute(f"SELECT count(*) FROM ({sql})", params).fetchone()
+        results.append(CheckResult(name, failures))
     return results
+
+
+def run_checks(
+    raw_dir: str | Path, cfg: GeneratorConfig, only: Collection[str] | None = None
+) -> list[CheckResult]:
+    """Run the checks against the raw files in raw_dir and return one result per check."""
+    raw_dir = Path(raw_dir)
+    positions_glob = _sql_path(raw_dir / "positions" / "date=*.parquet")
+    with duckdb.connect() as con:  # in-memory database, gone when the block ends
+        _view(con, "positions", f"FROM read_parquet({positions_glob}, filename = true)")
+        _view(con, "rates", f"FROM read_parquet({_sql_path(raw_dir / 'rates.parquet')})")
+        return _run(con, cfg, only)
+
+
+def run_checks_on_tables(
+    positions: pd.DataFrame,
+    rates: pd.DataFrame,
+    cfg: GeneratorConfig,
+    only: Collection[str] | None = None,
+) -> list[CheckResult]:
+    """Run the same checks on tables in memory (e.g. rows that passed row-level validation).
+
+    positions needs a 'filename' column naming each row's source file (as read_parquet's
+    filename option adds), so the file-name check can run.
+    """
+    with duckdb.connect() as con:
+        con.register("positions_input", positions)
+        con.register("rates_input", rates)
+        _view(con, "positions", "FROM positions_input")
+        _view(con, "rates", "FROM rates_input")
+        return _run(con, cfg, only)
 
 
 def main(argv: list[str] | None = None) -> int:
