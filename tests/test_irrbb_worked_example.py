@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from riskplatform.config import load_irrbb_rules
+from riskplatform.config import IrrbbRules, load_irrbb_rules
 
 RULES_DIR = Path(__file__).resolve().parents[1] / "config" / "irrbb"
 RULES = {regime: load_irrbb_rules(RULES_DIR / f"{regime}.yaml") for regime in ("basel", "pra")}
@@ -44,18 +44,15 @@ EXPECTED_NII = {
     "basel": {"parallel_up": -6.581520, "parallel_down": 6.581520},
     "pra": {"parallel_up": -6.581520, "parallel_down": 4.786225},
 }
-NOT_BUILT = pytest.mark.xfail(strict=True, reason="IRRBB calculations are built in steps 5.3-5.6")
+NOT_BUILT = pytest.mark.xfail(strict=True, reason="IRRBB calculations are built in steps 5.4-5.6")
 
 
-@NOT_BUILT
 def test_shapes_reproduce_the_basel_example_srp31_92():
     from riskplatform.irrbb.shocks import shocked_rates
 
-    rules = RULES["basel"]
-    hundred = {"parallel": 100, "short": 100, "long": 100}
-    sizes = {**rules.shocks.model_dump()["sizes_bp"], "GBP": hundred}
-    rules = rules.model_copy(update={"shocks": rules.shocks.model_copy(update={"sizes_bp": sizes})})
-    rules = type(rules).model_validate(rules.model_dump())
+    raw = RULES["basel"].model_dump()
+    raw["shocks"]["sizes_bp"]["GBP"] = {"parallel": 100, "short": 100, "long": 100}  # as SRP31.92
+    rules = IrrbbRules.model_validate(raw)
     tenor, zero = np.array([3.5]), np.array([0.0])
     steepener = shocked_rates(rules, "GBP", "steepener", tenor, zero)[0]
     flattener = shocked_rates(rules, "GBP", "flattener", tenor, zero)[0]
