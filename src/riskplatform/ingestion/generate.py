@@ -67,8 +67,11 @@ def build_book(cfg: GeneratorConfig, rng: np.random.Generator) -> pd.DataFrame:
     frames = []
     for entity in cfg.entities:
         for currency in cfg.currencies:
-            weight = 1.0 if currency == entity.home_currency else cfg.foreign_currency_weight
             for category in cfg.categories:
+                if currency == entity.home_currency:
+                    weight = 1.0
+                else:  # a category may set its own foreign weight
+                    weight = category.foreign_currency_weight or cfg.foreign_currency_weight
                 n = _position_count(category.n_positions, weight)
                 tenor_low, tenor_high = category.tenor_days
                 tenor = rng.integers(tenor_low, tenor_high + 1, n)

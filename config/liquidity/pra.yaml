@@ -54,6 +54,9 @@ lcr:
     undrawn_committed_lines:
       {rate: 0.10, within_horizon_only: false, ref: "LCR Art 31(4)",
        assumption: "committed credit facilities to non-financial corporates"}
+    interest_rate_swaps:
+      {rate: 0.00, within_horizon_only: false, ref: "LCR Art 21, Art 30(4), Art 32(5)",
+       assumption: "notional is not a cash flow; at-market swaps with no collateral; net settlement flows within 30 days not modelled"}
 
   inflows:  # liquid assets in the buffer are not inflows (LCR Art 32(6))
     corporate_loans:
@@ -110,3 +113,6 @@ nsfr:
       - {factor: 0.65, ref: "Art 428af(1)(a)", assumption: "qualifies for a 35% or lower risk weight"}
     undrawn_committed_lines:
       - {factor: 0.05, ref: "Art 428s(1)(c)", assumption: "5% of the undrawn amount"}
+    interest_rate_swaps:
+      - {factor: 0.00, ref: "Art 428ah(2), Art 428k(4), Art 428s(2)",
+         assumption: "charges apply to netting-set fair value, not notional; at-market swaps have zero fair value; no initial margin"}

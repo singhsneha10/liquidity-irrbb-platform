@@ -344,3 +344,40 @@ def test_real_mode_without_saved_fx_explains_how_to_get_it(cfg, tmp_path):
     curves = _write_curves(cfg, tmp_path / "curves.parquet")
     with pytest.raises(FileNotFoundError, match="market_rates"):
         generate(_real_cfg(cfg, curves, fx_file=tmp_path / "no_fx.parquet"))
+
+
+# --- Book composition: foreign weights and hedges ---------------------------------------------
+
+
+def _expected_count(cfg, category, home: bool) -> int:
+    weight = 1.0 if home else (category.foreign_currency_weight or cfg.foreign_currency_weight)
+    return max(1, round(category.n_positions * weight))
+
+
+def test_position_count_follows_the_config(cfg, positions):
+    per_entity = sum(
+        _expected_count(cfg, category, currency == entity.home_currency)
+        for entity in cfg.entities
+        for currency in cfg.currencies
+        for category in cfg.categories
+    )
+    assert positions["position_id"].nunique() == per_entity
+
+
+def test_category_foreign_weight_shrinks_foreign_reserves(cfg, positions):
+    first = positions[positions["date"] == positions["date"].min()]
+    reserves = first[first["category"] == "central_bank_reserves"]
+    home = {e.name: e.home_currency for e in cfg.entities}
+    is_home = reserves["currency"] == reserves["entity"].map(home)
+    assert (
+        reserves.loc[~is_home, "balance_mn"].mean()
+        < 0.2 * reserves.loc[is_home, "balance_mn"].mean()
+    )
+
+
+def test_every_book_has_swap_hedges(cfg, positions):
+    swaps = positions[positions["category"] == "interest_rate_swaps"]
+    assert len(swaps[["entity", "currency"]].drop_duplicates()) == len(cfg.entities) * len(
+        cfg.currencies
+    )
+    assert (swaps["side"] == "off_balance_sheet").all()

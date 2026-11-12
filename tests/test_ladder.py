@@ -101,3 +101,15 @@ def test_off_balance_sheet_items_are_contingent_only():
 def test_bad_ladder_configs_are_rejected(buckets):
     with pytest.raises(ValidationError):
         LadderConfig.model_validate({"buckets": buckets})
+
+
+def test_swap_notional_is_neither_a_cash_flow_nor_contingent():
+    ladder = build_ladder(
+        _positions(
+            ("interest_rate_swaps", "off_balance_sheet", 500, 3650),
+            ("undrawn_committed_lines", "off_balance_sheet", 200, 400),
+        ),
+        LADDER,
+    )
+    assert ladder.contingent == 200  # only the undrawn line
+    assert (ladder.table[["inflows", "outflows"]] == 0).all().all()

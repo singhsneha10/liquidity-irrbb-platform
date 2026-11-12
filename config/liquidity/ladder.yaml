@@ -12,3 +12,7 @@ buckets:
   - {label: 1-2 years, up_to_days: 730}
   - {label: 2-5 years, up_to_days: 1825}
   - {label: over 5 years}
+
+# Off-balance-sheet categories reported as contingent liquidity needs. Swap notionals are not
+# cash flows, so they are neither in the buckets nor contingent.
+contingent_categories: [undrawn_committed_lines]

@@ -59,6 +59,8 @@ def test_every_value_cites_its_source(rules):
 VERIFIED = {
     # (regime, path): expected
     ("basel", "lcr.inflow_cap"): 0.75,
+    ("basel", "lcr.outflows.interest_rate_swaps"): 0.00,  # notional is not a cash flow
+    ("basel", "nsfr.rsf.interest_rate_swaps"): [0.00],  # replacement cost, zero at market
     ("basel", "lcr.level2_cap"): 0.40,
     ("basel", "lcr.level2b_cap"): 0.15,
     ("basel", "lcr.hqla.covered_bonds"): ("2A", 0.15),
@@ -77,6 +79,8 @@ VERIFIED = {
     ("basel", "nsfr.asf.retail_stable_deposits"): [0.95, 1.00],
     ("basel", "nsfr.asf.financial_institution_deposits"): [0.00, 0.50, 1.00],
     ("pra", "lcr.inflow_cap"): 0.75,
+    ("pra", "lcr.outflows.interest_rate_swaps"): 0.00,
+    ("pra", "nsfr.rsf.interest_rate_swaps"): [0.00],
     ("pra", "lcr.level1_covered_bond_cap"): 0.70,
     ("pra", "lcr.hqla.covered_bonds"): ("1_covered", 0.07),
     ("pra", "lcr.hqla.corporate_bonds"): ("2B", 0.50),

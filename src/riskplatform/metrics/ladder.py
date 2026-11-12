@@ -1,8 +1,10 @@
 """Cash-flow maturity ladder for one group of positions (e.g. one date, entity, currency).
 
 A contractual view: each asset's principal flows in, and each liability's flows out, in the
-bucket where it matures (by residual_days). Off-balance-sheet commitments have no contractual
-maturity cash flow, so they are reported separately as contingent outflows.
+bucket where it matures (by residual_days). Off-balance-sheet commitments listed in
+ladder.contingent_categories (undrawn lines) have no contractual maturity cash flow, so they are
+reported separately as contingent outflows. Other off-balance-sheet items (swap notionals) are
+not cash flows and are left out.
 
 Every asset and liability falls in exactly one bucket, so the cumulative gap after the last
 bucket equals assets minus liabilities (the implied equity).
@@ -64,5 +66,10 @@ def build_ladder(positions: pd.DataFrame, ladder: LadderConfig) -> MaturityLadde
         },
         columns=LADDER_COLUMNS,
     )
-    contingent = float(balance[side == "off_balance_sheet"].sum())
+    # Contingent needs are the configured categories (undrawn lines); swap notionals are not
+    # cash flows, so they are neither in the buckets nor contingent.
+    contingent_rows = (side == "off_balance_sheet") & positions["category"].isin(
+        ladder.contingent_categories
+    )
+    contingent = float(balance[contingent_rows].sum())
     return MaturityLadder(table=table, contingent=contingent)
