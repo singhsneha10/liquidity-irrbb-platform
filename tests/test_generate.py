@@ -71,10 +71,43 @@ def test_balances_move_gradually(positions):
     assert daily_change.max() < 0.05
 
 
-def test_residual_days_count_down_or_roll_over(positions):
+@pytest.mark.parametrize("column", ["residual_days", "reprice_days"])
+def test_day_counts_fall_by_calendar_days_or_reset(positions, column):
+    # Each row, the count falls by the calendar days since the previous row (3 over a weekend),
+    # unless the date it counted down to fell within that gap, in which case it resets.
     ordered = positions.sort_values(["position_id", "date"])
-    change = ordered.groupby("position_id")["residual_days"].diff().dropna()
-    assert ((change == -1) | (change >= 0)).all()
+    by_position = ordered.groupby("position_id")
+    gap = by_position["date"].diff().dt.days
+    previous = by_position[column].shift()
+    change = ordered[column] - previous
+    counted_down = change == -gap
+    reset = previous <= gap
+    assert (counted_down | reset)[gap.notna()].all()
+    assert (gap == 3).any()  # the data must include a weekend, or this test proves nothing
+
+
+def test_rates_follow_their_currency_curve(cfg, positions):
+    # Every currency has the same product mix, so a lower curve must mean lower rates in every
+    # category: order the currencies by their curves, and check each category keeps that order.
+    by_curve = sorted(cfg.currencies, key=lambda c: cfg.rates.curves[c].short_rate)
+    means = positions.groupby(["category", "currency"])["interest_rate"].mean().unstack()
+    assert (means[by_curve].diff(axis=1).iloc[:, 1:] >= 0).all().all()
+    assert (means[by_curve[-1]] > means[by_curve[0]]).all()
+
+
+def test_deposits_pay_less_than_loans(positions):
+    means = positions.groupby(["currency", "category"])["interest_rate"].mean().unstack()
+    assert (means["retail_stable_deposits"] < means["corporate_loans"]).all()
+
+
+def test_floating_rates_reset_during_the_window(positions):
+    ordered = positions.sort_values(["position_id", "date"])
+    changed = ordered.groupby("position_id")["interest_rate"].diff().fillna(0) != 0
+    assert ordered.loc[changed, "rate_type"].eq("floating").any()
+
+
+def test_rates_respect_the_floor(cfg, positions):
+    assert (positions["interest_rate"] >= cfg.interest_rate_floor).all()
 
 
 def _equity_ratio(positions):

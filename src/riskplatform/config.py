@@ -36,6 +36,7 @@ class Category(_Strict):
     mean_balance_mn: float = Field(gt=0)
     rate_type: RateType
     tenor_days: tuple[int, int]
+    spread: float  # added to the reference curve rate (decimal; negative for most deposits)
 
     @model_validator(mode="after")
     def _check_tenor(self) -> "Category":
@@ -76,8 +77,8 @@ class GeneratorConfig(_Strict):
     entities: list[Entity]
     categories: list[Category]
     floating_reprice_days: tuple[int, int]
-    interest_rate_mean: float
-    interest_rate_sd: float = Field(ge=0)
+    spread_sd: float = Field(ge=0)
+    interest_rate_floor: float
     daily_balance_drift: float
     daily_balance_vol: float = Field(ge=0)
     rates: RatesConfig

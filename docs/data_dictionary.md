@@ -33,7 +33,7 @@ One row per banking-book position per business day.
 | `side` | string | `asset`, `liability`, `off_balance_sheet`; must equal the category's `side` in config | Where the position sits on the balance sheet. |
 | `balance_mn` | float | > 0 | Outstanding amount in **millions of the position's own currency** (no FX conversion). For `off_balance_sheet` rows this is the undrawn committed amount. |
 | `rate_type` | string | `fixed`, `floating` | Whether the interest rate is fixed to maturity or resets periodically. |
-| `interest_rate` | float | between -0.05 and 0.25 | Annual contractual rate as a decimal (`0.045` = 4.5%). |
+| `interest_rate` | float | between -0.05 and 0.25; >= `interest_rate_floor`; changes only on a reset or rollover | Annual contractual rate as a decimal (`0.045` = 4.5%). Set on the position's last fixing date (see "Interest rates" below). |
 | `residual_days` | integer | >= 1 | Calendar days until the position matures (residual contractual maturity). |
 | `reprice_days` | integer | >= 1 and <= `residual_days` | Days until the interest rate next resets. Fixed-rate: always equal to `residual_days`. Floating-rate: next reset on its cycle, capped at maturity. |
 
@@ -46,21 +46,21 @@ One row per banking-book position per business day.
 
 ### Product categories
 
-| `category` | `side` | `rate_type` | Maturity range at issue (days) |
-|---|---|---|---|
-| `central_bank_reserves` | asset | floating | 1 |
-| `govt_bonds` | asset | fixed | 90 - 3,650 |
-| `covered_bonds` | asset | fixed | 180 - 2,500 |
-| `corporate_bonds` | asset | fixed | 180 - 2,500 |
-| `corporate_loans` | asset | floating | 30 - 1,800 |
-| `retail_mortgages` | asset | fixed | 365 - 9,000 |
-| `retail_stable_deposits` | liability | floating | 1 |
-| `retail_less_stable_deposits` | liability | floating | 1 |
-| `wholesale_operational` | liability | floating | 1 - 30 |
-| `wholesale_non_operational` | liability | floating | 1 - 180 |
-| `financial_institution_deposits` | liability | floating | 1 - 90 |
-| `term_debt` | liability | fixed | 365 - 3,650 |
-| `undrawn_committed_lines` | off_balance_sheet | floating | 365 - 1,825 |
+| `category` | `side` | `rate_type` | Maturity range at issue (days) | Spread over curve |
+|---|---|---|---|---|
+| `central_bank_reserves` | asset | floating | 1 | 0.00% |
+| `govt_bonds` | asset | fixed | 90 - 3,650 | 0.00% |
+| `covered_bonds` | asset | fixed | 180 - 2,500 | +0.40% |
+| `corporate_bonds` | asset | fixed | 180 - 2,500 | +1.20% |
+| `corporate_loans` | asset | floating | 30 - 1,800 | +2.00% |
+| `retail_mortgages` | asset | fixed | 365 - 9,000 | +1.00% |
+| `retail_stable_deposits` | liability | floating | 1 | -2.50% |
+| `retail_less_stable_deposits` | liability | floating | 1 | -1.50% |
+| `wholesale_operational` | liability | floating | 1 - 30 | -1.00% |
+| `wholesale_non_operational` | liability | floating | 1 - 180 | -0.30% |
+| `financial_institution_deposits` | liability | floating | 1 - 90 | -0.10% |
+| `term_debt` | liability | fixed | 365 - 3,650 | +1.00% |
+| `undrawn_committed_lines` | off_balance_sheet | floating | 365 - 1,825 | +2.00% (rate if drawn) |
 
 The source of truth is `config/generator.yaml`. This table copies it for reading convenience.
 
@@ -76,10 +76,23 @@ The source of truth is `config/generator.yaml`. This table copies it for reading
 - **Daily balances:** each position takes an independent small random step every day
   (`daily_balance_drift`, `daily_balance_vol`). The identity therefore holds exactly on day one
   only.
-- **Maturity:** `residual_days` counts down by one per row. When a position matures, it is
-  replaced by an identical one at full original tenor (rollover).
+- **Maturity:** `residual_days` counts down by the calendar days elapsed (3 over a weekend).
+  When a position matures, it is replaced by an identical one at full original tenor
+  (rollover).
 - **Repricing:** floating-rate positions reset on a fixed cycle of 1-90 days
   (`floating_reprice_days`), with a random starting point.
+- **Interest rates:** a rate is set on the position's last **fixing date**. For fixed-rate
+  positions that is the last issue or rollover. For floating-rate positions it is the later of
+  the last reset and the last rollover. The rate is:
+
+  `max(curve rate + spread, interest_rate_floor)`
+
+  - *curve rate*: the position's currency curve on the fixing date, at its **reference tenor**,
+    read by straight-line interpolation between curve points. Fixed-rate positions use their
+    full original tenor. Floating-rate positions use their reset cycle, capped at their tenor, so
+    a 1-day deposit resets daily at the short end.
+  - *spread*: the category's spread (table above) plus small per-position noise (`spread_sd`).
+  - The rate does not change between fixings.
 
 ### Planned use in metrics
 
@@ -120,7 +133,8 @@ One row per business day, currency and curve tenor.
 
 ### Planned use in metrics
 
-IRRBB discounting and rate-shock scenarios (Phase 5).
+Reference rates for position interest rates (generator); IRRBB discounting and rate-shock
+scenarios (Phase 5).
 
 ---
 
@@ -133,11 +147,14 @@ mistaken for a regulatory or market feature.
 2. **Balances are in local currency.** There is no FX conversion. Cross-currency totals need an
    FX rate, which is not yet part of the raw layer.
 3. **Parallel curve moves only.** Real curves also steepen, flatten and twist.
-4. **`interest_rate` is fixed per position for the whole history.** It does not change when
-   `reprice_days` reaches a reset or when a position rolls over. It is also drawn from one
-   distribution (`interest_rate_mean` 4%, `interest_rate_sd` 1%) for every currency and side,
-   so it is not linked to the market curves. For example, EUR positions average about 4% while
-   the EUR curve is 2-3%. Phase 5 (IRRBB) needs this fixed in the generator.
+4. **Simple interest-rate pricing.**
+   - One spread per category plus small noise. There is no credit-risk pricing, and deposit
+     rates are not modelled behaviourally (in reality they lag market rates).
+   - The floor is 0% for every position.
+   - Positions fixed before the first date use the first day's curve, because there is no
+     earlier curve history.
+   - The shortest curve point is 1 month, so overnight rates are approximated by the 1-month
+     rate.
 5. **Non-maturity deposits are modelled as overnight** (`residual_days` = 1). Real banks apply
    behavioural assumptions to these for IRRBB. Those assumptions will be config in Phase 5.
 6. **Rollover reissues an identical position.** The balance path, rate and tenor all continue
