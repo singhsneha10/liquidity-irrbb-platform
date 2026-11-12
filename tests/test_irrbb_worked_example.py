@@ -44,9 +44,7 @@ EXPECTED_NII = {
     "basel": {"parallel_up": -6.581520, "parallel_down": 6.581520},
     "pra": {"parallel_up": -6.581520, "parallel_down": 4.786225},
 }
-NOT_BUILT = pytest.mark.xfail(
-    strict=True, reason="delta EVE and delta NII are built in steps 5.5-5.6"
-)
+NOT_BUILT = pytest.mark.xfail(strict=True, reason="delta NII is built in step 5.6")
 
 
 def test_shapes_reproduce_the_basel_example_srp31_92():
@@ -62,7 +60,6 @@ def test_shapes_reproduce_the_basel_example_srp31_92():
     assert round(flattener * 1e4, 1) == -1.6
 
 
-@NOT_BUILT
 @pytest.mark.parametrize("regime", ["basel", "pra"])
 def test_delta_eve_matches_the_hand_calculation(regime):
     from riskplatform.irrbb.eve import delta_eve
@@ -71,7 +68,6 @@ def test_delta_eve_matches_the_hand_calculation(regime):
     assert result == pytest.approx(EXPECTED_EVE[regime], abs=1e-6)
 
 
-@NOT_BUILT
 @pytest.mark.parametrize("regime", ["basel", "pra"])
 def test_worst_loss_and_outlier_test(regime):
     from riskplatform.irrbb.eve import eve_risk
