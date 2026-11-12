@@ -6,11 +6,28 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from riskplatform.config import GeneratorConfig
+from riskplatform.config import GeneratorConfig, load_generator_config
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.validation.check_raw import CHECKS, SYNTHETIC_ONLY, main, run_checks
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "generator.yaml"
+SHORT_DAYS = 12  # faults are planted up to the 11th day; the last day must come after that
+
+
+@pytest.fixture(scope="module")
+def cfg(cfg) -> GeneratorConfig:
+    """The same bank over 12 days (overrides conftest's 60-day cfg here): every test writes
+    and checks fresh files, so the full 60 days made this module the slowest in the suite.
+    test_all_checks_pass_on_the_full_bank still checks all 60 days once."""
+    return GeneratorConfig.model_validate({**cfg.model_dump(), "n_days": SHORT_DAYS})
+
+
+def _short_config_file(tmp_path: Path, *extra_lines: str) -> Path:
+    """A config file for the command-line tests: the short bank, plus any extra lines."""
+    path = tmp_path / "short.yaml"
+    lines = [f"base: {CONFIG_PATH.as_posix()}", f"n_days: {SHORT_DAYS}", *extra_lines]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 @pytest.fixture(scope="module")
@@ -112,8 +129,26 @@ def _fx_missing_a_rate(raw_dir):
     )
 
 
+def _curve_missing_for_a_currency(raw_dir):
+    rates = pd.read_parquet(raw_dir / "rates.parquet")
+    day = sorted(rates["date"].unique())[3]
+    _edit(
+        raw_dir / "rates.parquet",
+        lambda frame: frame[~((frame["currency"] == "EUR") & (frame["date"] == day))],
+    )
+
+
+def _book_missing_on_a_day(raw_dir):
+    _edit(
+        _day_files(raw_dir)[4],
+        lambda frame: frame[~((frame["entity"] == "BANK_EU") & (frame["currency"] == "EUR"))],
+    )
+
+
 FAULTS = {
     "files_hold_their_own_date": _wrong_file_name,
+    "curves_cover_every_currency": _curve_missing_for_a_currency,
+    "every_book_every_day": _book_missing_on_a_day,
     "fx_covers_every_date": _fx_missing_a_rate,
     "day_count_matches_config": _missing_day,
     "positions_and_rates_share_dates": _rates_missing_a_day,
@@ -136,6 +171,13 @@ def test_all_checks_pass_on_clean_files(cfg, raw_dir):
     assert failed == []
 
 
+def test_all_checks_pass_on_the_full_bank(tmp_path):
+    """The generator as configured (all 60 days) meets every check."""
+    full = load_generator_config(CONFIG_PATH)
+    write_outputs(generate(full), tmp_path)
+    assert [r.name for r in run_checks(tmp_path, full) if not r.passed] == []
+
+
 @pytest.mark.parametrize("check", list(FAULTS))
 def test_check_catches_its_fault(cfg, raw_dir, check):
     FAULTS[check](raw_dir)
@@ -143,12 +185,14 @@ def test_check_catches_its_fault(cfg, raw_dir, check):
     assert not results[check].passed
 
 
-def test_command_line_exit_codes(raw_dir, capsys):
-    args = ["--config", str(CONFIG_PATH), "--raw", str(raw_dir)]
+def test_command_line_exit_codes(raw_dir, tmp_path_factory, caplog):
+    config = _short_config_file(tmp_path_factory.mktemp("config"))
+    args = ["--config", str(config), "--raw", str(raw_dir)]
     assert main(args) == 0
     _missing_row(raw_dir)
     assert main(args) == 1
-    assert "FAIL  every_position_every_day" in capsys.readouterr().out
+    failures = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert any(m.startswith("FAIL  every_position_every_day") for m in failures)
 
 
 # --- Real-rates mode: synthetic-only curve checks are skipped and reported -------------------
@@ -175,16 +219,14 @@ def test_real_mode_skips_only_synthetic_checks_and_still_catches_faults(cfg, raw
     assert not {r.name: r for r in run_checks(raw_dir, real)}[check].passed
 
 
-def test_command_line_reports_skipped_checks(cfg, raw_dir, tmp_path, capsys):
-    real_config = tmp_path / "real.yaml"
-    lines = [
-        f"base: {CONFIG_PATH.as_posix()}",
+def test_command_line_reports_skipped_checks(raw_dir, tmp_path_factory, caplog):
+    real_config = _short_config_file(
+        tmp_path_factory.mktemp("config"),
         "rates:",
         "  source: real",
         "  real: {curves_file: unused.parquet, fx_file: unused.parquet, max_fill_days: 4}",
-    ]
-    real_config.write_text("\n".join(lines), encoding="utf-8")
+    )
     assert main(["--config", str(real_config), "--raw", str(raw_dir)]) == 0
-    out = capsys.readouterr().out
+    out = caplog.text
     assert "SKIP  curves_move_in_parallel" in out
     assert f"{len(CHECKS) - 2} passed, 0 failed, 2 skipped" in out

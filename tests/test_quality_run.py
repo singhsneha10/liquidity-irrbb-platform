@@ -9,8 +9,8 @@ import pytest
 from riskplatform.config import GeneratorConfig, load_quality_config
 from riskplatform.controls import CONTROL_FILE, write_control_totals
 from riskplatform.ingestion.generate import generate, write_outputs
-from riskplatform.quality.report import table_of
-from riskplatform.quality.run import MANIFEST, main, run_quality
+from riskplatform.quality.report import render_markdown, table_of
+from riskplatform.quality.run import MANIFEST, _rename, main, run_quality
 
 ROOT = Path(__file__).resolve().parents[1]
 QUALITY_PATH = ROOT / "config" / "quality.yaml"
@@ -197,6 +197,85 @@ def test_bad_fx_rate_is_quarantined_and_the_missing_rate_stops_the_run(
     assert result.status == "stopped"  # ... which leaves USD without a rate that day
     stops = {c["name"]: c["passed"] for c in result.report["file_checks"]["stops"]}
     assert stops["fx_covers_every_date"] is False
+
+
+def test_empty_day_file_stops_the_run(raw_dir, small_cfg, quality_cfg):
+    _edit(raw_dir, SECOND_DAY, lambda frame: frame.iloc[0:0])  # header only
+    _resend_control_totals(raw_dir)  # the source itself sent an empty day
+    result = _run(raw_dir, small_cfg, quality_cfg)
+    assert result.status == "stopped"
+    stops = {c["name"]: c["passed"] for c in result.report["file_checks"]["stops"]}
+    assert stops["day_count_matches_config"] is False
+
+
+def test_currency_without_a_curve_stops_the_run(raw_dir, small_cfg, quality_cfg):
+    day = pd.Timestamp("2026-08-04")
+    _edit(
+        raw_dir,
+        "rates.parquet",
+        lambda frame: frame[~((frame["currency"] == "EUR") & (frame["date"] == day))],
+    )
+    _resend_control_totals(raw_dir)
+    result = _run(raw_dir, small_cfg, quality_cfg)
+    assert result.status == "stopped"  # before: published, then IRRBB crashed
+    stops = {c["name"]: c["passed"] for c in result.report["file_checks"]["stops"]}
+    assert stops == {**dict.fromkeys(stops, True), "curves_cover_every_currency": False}
+
+
+def test_book_missing_on_a_day_warns_and_still_publishes(raw_dir, small_cfg, quality_cfg):
+    _edit(raw_dir, SECOND_DAY, lambda frame: frame[frame["currency"] != "EUR"])
+    _resend_control_totals(raw_dir)
+    result = _run(raw_dir, small_cfg, quality_cfg)
+    assert result.status == "published"
+    warnings = {c["name"]: c["passed"] for c in result.report["file_checks"]["warnings"]}
+    assert warnings["every_book_every_day"] is False
+    assert "every_book_every_day" in _markdown(result)
+
+
+def test_second_good_run_replaces_the_first_and_leaves_nothing_behind(
+    raw_dir, small_cfg, quality_cfg
+):
+    """Every daily run after the first publishes over earlier data: the swap must be clean."""
+    first = _run(raw_dir, small_cfg, quality_cfg)
+    second = _run(raw_dir, small_cfg, quality_cfg)
+    assert (first.status, second.status) == ("published", "published")
+    assert _manifest(raw_dir)["run_id"] == second.run_id
+    out = raw_dir.parent / "out"
+    assert sorted(p.name for p in out.iterdir()) == ["quality_runs", "validated"]  # no staging
+    assert len(list((out / "validated" / "positions").glob("*.parquet"))) == small_cfg.n_days
+
+
+def test_rename_retries_while_a_file_is_briefly_locked(tmp_path, monkeypatch):
+    source, target = tmp_path / "staging", tmp_path / "validated"
+    source.mkdir()
+    real_rename, calls = Path.rename, []
+
+    def locked_twice(self, destination):
+        calls.append(self)
+        if len(calls) <= 2:
+            raise PermissionError("locked by antivirus")
+        return real_rename(self, destination)
+
+    monkeypatch.setattr(Path, "rename", locked_twice)
+    _rename(source, target, attempts=5, wait_seconds=0)
+    assert target.exists() and not source.exists() and len(calls) == 3
+
+
+def test_rename_gives_up_after_its_last_attempt(tmp_path, monkeypatch):
+    def always_locked(self, destination):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(Path, "rename", always_locked)
+    with pytest.raises(PermissionError):
+        _rename(tmp_path / "a", tmp_path / "b", attempts=3, wait_seconds=0)
+
+
+def test_markdown_row_limit_comes_from_config(raw_dir, small_cfg, quality_cfg):
+    result = _run(raw_dir, small_cfg, quality_cfg)
+    checks = result.report["file_checks"]
+    total = len(checks["stops"]) + len(checks["warnings"])
+    assert f"... and {total - 1} more" in render_markdown(result.report, max_rows=1)
+    assert "more (see breaks_report.json)" not in render_markdown(result.report, max_rows=10_000)
 
 
 def test_missing_fx_file_stops_the_run(raw_dir, small_cfg, quality_cfg):

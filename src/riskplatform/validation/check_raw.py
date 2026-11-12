@@ -9,6 +9,7 @@ Run with:  python -m riskplatform.validation.check_raw
 """
 
 import argparse
+import logging
 import sys
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -18,6 +19,9 @@ import duckdb
 import pandas as pd
 
 from riskplatform.config import GeneratorConfig, load_generator_config
+from riskplatform.logs import setup_logging
+
+logger = logging.getLogger(__name__)
 
 # Tolerances for comparing floating-point numbers that should be equal.
 BALANCE_TOLERANCE = 1e-9  # relative to total assets
@@ -42,6 +46,24 @@ CHECKS = {
         FROM (SELECT DISTINCT date FROM positions) AS p
         FULL OUTER JOIN (SELECT DISTINCT date FROM rates) AS r USING (date)
         WHERE p.date IS NULL OR r.date IS NULL
+    """,
+    "curves_cover_every_currency": """
+        SELECT DISTINCT p.date, p.currency
+        FROM positions AS p
+        LEFT JOIN (SELECT DISTINCT date, currency FROM rates) AS r
+            ON r.date = p.date AND r.currency = p.currency
+        WHERE r.date IS NULL
+    """,
+    "every_book_every_day": """
+        WITH books AS (SELECT DISTINCT entity, currency FROM positions),
+             days AS (SELECT DISTINCT date FROM positions),
+             present AS (SELECT DISTINCT date, entity, currency FROM positions)
+        SELECT d.date, b.entity, b.currency
+        FROM books AS b
+        CROSS JOIN days AS d
+        LEFT JOIN present AS p
+            ON p.date = d.date AND p.entity = b.entity AND p.currency = b.currency
+        WHERE p.date IS NULL
     """,
     "fx_covers_every_date": """
         WITH expected AS (
@@ -266,16 +288,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--raw", type=Path, default=Path("data/raw"))
     args = parser.parse_args(argv)
 
+    setup_logging()
     results = run_checks(args.raw, load_generator_config(args.config))
     for result in results:
         if result.skipped:
-            print(f"SKIP  {result.name}  (synthetic curves only)")
-            continue
-        detail = "" if result.passed else f"  ({result.failures} offending rows)"
-        print(f"{'PASS' if result.passed else 'FAIL'}  {result.name}{detail}")
+            logger.info("SKIP  %s  (synthetic curves only)", result.name)
+        elif result.passed:
+            logger.info("PASS  %s", result.name)
+        else:
+            logger.error("FAIL  %s  (%d offending rows)", result.name, result.failures)
     skipped = sum(result.skipped for result in results)
     failed = sum(not result.passed for result in results)
-    print(f"{len(results) - failed - skipped} passed, {failed} failed, {skipped} skipped")
+    summary = f"{len(results) - failed - skipped} passed, {failed} failed, {skipped} skipped"
+    (logger.error if failed else logger.info)(summary)
     return 1 if failed else 0
 
 

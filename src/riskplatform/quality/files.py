@@ -21,9 +21,11 @@ STOP_CHECKS = (
     "files_hold_their_own_date",  # a file holding the wrong date would misplace a whole day
     "day_count_matches_config",  # a missing day changes every total and trend
     "positions_and_rates_share_dates",  # a day without curves cannot be priced
+    "curves_cover_every_currency",  # nor can a currency without a curve that day (IRRBB)
     "fx_covers_every_date",  # without a rate, amounts cannot be converted for entity/group totals
 )
 WARNING_CHECKS = (
+    "every_book_every_day",  # an entity/currency book missing on a day: totals drop silently
     "static_attributes_unchanged",  # e.g. a position switching currency or category
     "day_counts_fall_by_calendar_days",  # maturities or resets that jump unexpectedly
     "rate_changes_only_at_reset",  # a rate that moved with no reset due

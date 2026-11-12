@@ -121,12 +121,12 @@ def _check(positions: pd.DataFrame, rules: LiquidityRules) -> None:
 def hqla_stock(positions: pd.DataFrame, rules: LiquidityRules) -> HqlaStock:
     """HQLA after haircuts, by level, before and after the caps."""
     lcr = rules.lcr
-    held = positions[positions["category"].isin(lcr.hqla)]
-    level = held["category"].map({name: t.level for name, t in lcr.hqla.items()})
-    # astype(float): with no rows, map() would return a text column and the maths would fail
-    haircut = held["category"].map({name: t.haircut for name, t in lcr.hqla.items()}).astype(float)
-    by_level = (held["balance_mn"] * (1.0 - haircut)).groupby(level).sum()
-    amounts = {key: float(by_level.get(key, 0.0)) for key in ("1", "1_covered", "2A", "2B")}
+    categories = positions["category"].to_numpy()
+    balance = positions["balance_mn"].to_numpy(dtype=float)
+    amounts = dict.fromkeys(("1", "1_covered", "2A", "2B"), 0.0)
+    for name, treatment in lcr.hqla.items():  # balance after haircut, added up by level
+        held = balance[categories == name].sum()
+        amounts[treatment.level] += float(held * (1.0 - treatment.haircut))
     covered_cap = lcr.level1_covered_bond_cap
     counted = apply_caps(
         amounts["1"],
@@ -142,11 +142,16 @@ def hqla_stock(positions: pd.DataFrame, rules: LiquidityRules) -> HqlaStock:
 
 def _flow_total(positions: pd.DataFrame, table: dict, horizon_days: int) -> float:
     """Sum of balance x rate; where within_horizon_only, only amounts due within the horizon."""
-    rows = positions[positions["category"].isin(table)]
-    rate = rows["category"].map({name: t.rate for name, t in table.items()}).astype(float)
-    only_due = rows["category"].map({name: t.within_horizon_only for name, t in table.items()})
-    counted = ~only_due.astype(bool) | (rows["residual_days"] <= horizon_days)
-    return float((rows["balance_mn"] * rate)[counted].sum())
+    categories = positions["category"].to_numpy()
+    balance = positions["balance_mn"].to_numpy(dtype=float)
+    due = positions["residual_days"].to_numpy() <= horizon_days
+    total = 0.0
+    for name, treatment in table.items():
+        counted = categories == name
+        if treatment.within_horizon_only:
+            counted &= due
+        total += treatment.rate * float(balance[counted].sum())
+    return total
 
 
 def calculate_lcr(positions: pd.DataFrame, rules: LiquidityRules) -> LcrResult:

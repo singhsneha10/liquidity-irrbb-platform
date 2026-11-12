@@ -38,7 +38,7 @@ One row per banking-book position per business day.
 | `side` | string | `asset`, `liability`, `off_balance_sheet`; must equal the category's `side` in config | Where the position sits on the balance sheet. |
 | `balance_mn` | float | > 0 | Outstanding amount in **millions of the position's own currency** (no FX conversion). For `off_balance_sheet` rows this is the undrawn committed amount. |
 | `rate_type` | string | `fixed`, `floating` | Whether the interest rate is fixed to maturity or resets periodically. |
-| `interest_rate` | float | between -0.05 and 0.25; >= `interest_rate_floor`; changes only on a reset or rollover | Annual contractual rate as a decimal (`0.045` = 4.5%). Set on the position's last fixing date (see "Interest rates" below). |
+| `interest_rate` | float | within `rate_bounds` in config (-0.05 to 0.25); >= `interest_rate_floor`; changes only on a reset or rollover | Annual contractual rate as a decimal (`0.045` = 4.5%). Set on the position's last fixing date (see "Interest rates" below). |
 | `residual_days` | integer | >= 1 | Calendar days until the position matures (residual contractual maturity). |
 | `reprice_days` | integer | >= 1 and <= `residual_days` | Days until the interest rate next resets. Fixed-rate: always equal to `residual_days`. Floating-rate: next reset on its cycle, capped at maturity. |
 
@@ -134,7 +134,7 @@ One row per business day, currency and curve tenor.
 | `date` | datetime | business day (Mon-Fri), same dates as positions | Date of the curve. |
 | `currency` | string | `currencies` in config | Currency of the yield curve. |
 | `tenor_years` | float | > 0; `rates.tenors_years` in config: 0.0833 (1M), 0.25, 0.5, 1, 2, 5, 10, 30 | Point on the curve, in years. |
-| `rate` | float | between -0.05 and 0.25 | Annual yield at that tenor, as a decimal. |
+| `rate` | float | within `rate_bounds` in config (-0.05 to 0.25) | Annual yield at that tenor, as a decimal. |
 
 ### Table-level rules (from `rates_schema`)
 
@@ -193,7 +193,7 @@ Both files are under `data/`, which is ignored by Git, so each machine fetches i
 | `date` | datetime | | Date of the published curve (that market's business days). |
 | `currency` | string | the currencies in `config/market_rates.yaml` | Currency of the curve. |
 | `tenor_years` | float | > 0, rounded to 4 decimals | The source's own curve point, in years. |
-| `rate` | float | between -0.05 and 0.25 | Yield as a decimal; sources publish percent, divided by 100. |
+| `rate` | float | within `rate_bounds` in config (-0.05 to 0.25) | Yield as a decimal; sources publish percent, divided by 100. |
 | `source` | string | `fred`, `ecb`, `boe` | Which source the row came from. |
 
 Table rule: `(date, currency, tenor_years)` is unique.

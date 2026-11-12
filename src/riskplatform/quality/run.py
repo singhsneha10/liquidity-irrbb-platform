@@ -31,6 +31,7 @@ from riskplatform.config import (
     load_quality_config,
 )
 from riskplatform.controls import CONTROL_FILE, read_control_totals
+from riskplatform.logs import setup_logging
 from riskplatform.quality.files import FileChecksFailed, check_files
 from riskplatform.quality.outliers import find_outliers
 from riskplatform.quality.reconcile import ReconciliationFailed, reconcile
@@ -149,7 +150,8 @@ def run_quality(
             validated[name] = result.valid
             quarantines.append(result.quarantine)
 
-        reconciliation = reconcile(control, arrived, validated)
+        tolerance = quality_cfg.reconciliation.relative_tolerance
+        reconciliation = reconcile(control, arrived, validated, tolerance=tolerance)
         positions = pd.concat(
             [validated[name].assign(filename=name) for name in position_files], ignore_index=True
         )
@@ -195,7 +197,7 @@ def run_quality(
             "breaks_report": (run_dir / "breaks_report.md").as_posix(),
         }
         _publish(out_dir, run_id, validated, manifest)
-    write_report(run_dir, report)
+    write_report(run_dir, report, quality_cfg.report.max_markdown_rows)
     return RunResult(run_id=run_id, status=status, run_dir=run_dir, report=report)
 
 
@@ -207,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("data"))
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging()
     result = run_quality(
         args.raw, args.out, load_generator_config(args.config), load_quality_config(args.quality)
     )

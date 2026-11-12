@@ -19,3 +19,16 @@ outliers:
 
   # Any curve point moving more than this in one business day.
   curve_move: 0.005  # 50 basis points
+
+reconciliation:
+  # Largest difference allowed between a file's totals as sent (control totals) and as
+  # arrived, relative to max(1, |sent total|); a bigger difference stops the run. The source and
+  # the receiver add up the same rows the same way, so any real loss or change is far larger:
+  # this only absorbs floating-point rounding. Against a real source system it becomes a
+  # business choice (e.g. accept differences below 0.01 mn).
+  relative_tolerance: 1.0e-9
+
+report:
+  # Rows shown per table in breaks_report.md; longer lists are cut there with a note.
+  # breaks_report.json always holds every row.
+  max_markdown_rows: 20

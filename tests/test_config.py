@@ -4,9 +4,19 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from riskplatform.config import GeneratorConfig, _read_generator_yaml, load_generator_config
+from riskplatform.config import (
+    GeneratorConfig,
+    IrrbbRules,
+    LadderConfig,
+    MarketRatesConfig,
+    _read_generator_yaml,
+    load_generator_config,
+    load_market_rates_config,
+    load_quality_config,
+)
 
-REAL_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "generator_real.yaml"
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+REAL_CONFIG_PATH = CONFIG_DIR / "generator_real.yaml"
 
 
 def test_loads_with_expected_shape(cfg):
@@ -102,3 +112,91 @@ def test_base_file_is_merged_key_by_key(tmp_path):
     child = _write_yaml(tmp_path / "c.yaml", {"base": "b.yaml", "rates": {"tenors": [5]}})
     merged = _read_generator_yaml(child)
     assert merged == {"x": 1, "rates": {"source": "real", "tenors": [5]}}  # list replaced
+
+
+def test_rejects_rate_bounds_the_wrong_way_round(cfg):
+    raw = cfg.model_dump()
+    raw["rate_bounds"] = {"low": 0.25, "high": -0.05}
+    with pytest.raises(ValidationError, match="low must be below high"):
+        GeneratorConfig.model_validate(raw)
+
+
+def test_rejects_interest_rate_floor_outside_the_rate_bounds(cfg):
+    raw = cfg.model_dump()
+    raw["interest_rate_floor"] = -0.10  # below the -5% bound: floored rates would be quarantined
+    with pytest.raises(ValidationError, match="outside rate_bounds"):
+        GeneratorConfig.model_validate(raw)
+
+
+def test_fetch_and_generator_use_the_same_rate_bounds(cfg):
+    """Saved curves are checked on download and again when read: the two bounds must agree."""
+    market = load_market_rates_config(CONFIG_DIR / "market_rates.yaml")
+    assert market.rate_bounds == cfg.rate_bounds
+
+
+def test_quality_config_loads_every_setting():
+    quality = load_quality_config(CONFIG_DIR / "quality.yaml")
+    assert isinstance(quality.reconciliation.relative_tolerance, float)  # 1e-9 in YAML is text
+    assert quality.report.max_markdown_rows > 0
+
+
+# --- Every config rule refuses a bad file -----------------------------------------------------
+
+
+def _set_fx_rate_to_zero(raw):
+    raw["fx"]["start_to_reporting"]["USD"] = 0.0
+
+
+def _reporting_currency_not_held(raw):
+    raw["fx"]["reporting_currency"] = "JPY"
+
+
+def _fx_start_rate_missing(raw):
+    del raw["fx"]["start_to_reporting"]["EUR"]
+
+
+def _last_ladder_bucket_closed(raw):
+    raw["buckets"][-1]["up_to_days"] = 99_999
+
+
+def _ladder_edges_out_of_order(raw):
+    raw["buckets"][1]["up_to_days"], raw["buckets"][2]["up_to_days"] = 30, 7
+
+
+def _ladder_labels_repeated(raw):
+    raw["buckets"][1]["label"] = raw["buckets"][0]["label"]
+
+
+def _nmd_type_unknown(raw):
+    first = next(iter(raw["nmd"]["categories"]))
+    raw["nmd"]["categories"][first]["type"] = "very_stable"
+
+
+def _last_repricing_bucket_closed(raw):
+    raw["buckets"][-1]["up_to_years"] = 50.0
+
+
+def _fx_url_without_placeholders(raw):
+    raw["boe_fx"]["url"] = "https://example.invalid/fx.csv"
+
+
+@pytest.mark.parametrize(
+    ("model", "path", "break_it", "message"),
+    [
+        (GeneratorConfig, "generator.yaml", _set_fx_rate_to_zero, "must be above 0"),
+        (GeneratorConfig, "generator.yaml", _reporting_currency_not_held, "is not in"),
+        (GeneratorConfig, "generator.yaml", _fx_start_rate_missing, "must give exactly"),
+        (LadderConfig, "liquidity/ladder.yaml", _last_ladder_bucket_closed, "open-ended"),
+        (LadderConfig, "liquidity/ladder.yaml", _ladder_edges_out_of_order, "rise strictly"),
+        (LadderConfig, "liquidity/ladder.yaml", _ladder_labels_repeated, "unique"),
+        (IrrbbRules, "irrbb/basel.yaml", _nmd_type_unknown, "unknown type"),
+        (IrrbbRules, "irrbb/basel.yaml", _last_repricing_bucket_closed, "open-ended"),
+        (MarketRatesConfig, "market_rates.yaml", _fx_url_without_placeholders, "must contain"),
+    ],
+)
+def test_config_rule_refuses_a_bad_file(model, path, break_it, message):
+    raw = _read_generator_yaml(CONFIG_DIR / path)  # plain YAML (and 'base:') as a dict
+    model.model_validate(raw)  # the shipped file is valid ...
+    break_it(raw)
+    with pytest.raises(ValidationError, match=message):  # ... and the broken one is refused
+        model.model_validate(raw)

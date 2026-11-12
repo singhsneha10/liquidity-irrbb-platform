@@ -27,6 +27,7 @@ from riskplatform.config import (
     SeriesSource,
     load_market_rates_config,
 )
+from riskplatform.logs import setup_logging
 from riskplatform.schemas import market_curves_schema, market_fx_schema
 
 logger = logging.getLogger(__name__)
@@ -156,7 +157,7 @@ def fetch_curves(cfg: MarketRatesConfig, fetch: Fetch) -> pd.DataFrame:
     curves = curves[curves["date"] >= pd.Timestamp(start)]
     curves = curves.assign(rate=curves["rate"] / 100.0)  # percent -> decimal
     curves = curves.sort_values(["currency", "date", "tenor_years"], ignore_index=True)
-    return market_curves_schema(cfg.currencies).validate(curves[COLUMNS])
+    return market_curves_schema(cfg.currencies, cfg.rate_bounds).validate(curves[COLUMNS])
 
 
 # --- FX (Bank of England Database) -------------------------------------------------------------
@@ -268,7 +269,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--config", type=Path, default=Path("config/market_rates.yaml"))
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging()
     cfg = load_market_rates_config(args.config)
     fetch = http_fetcher(cfg.user_agent, cfg.timeout_seconds)
     retrieved_at = datetime.now(UTC)

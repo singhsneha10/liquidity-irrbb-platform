@@ -25,6 +25,23 @@ def _check_day_range(label: str, days: tuple[int, int]) -> None:
         raise ValueError(f"{label}: expected 1 <= low <= high, got {days}")
 
 
+class RateBounds(_Strict):
+    """Sanity bounds on any interest rate or yield (decimals): a value outside is an error.
+
+    Not a market view: they exist to catch values no real rate could take, such as 4.5 typed
+    for 4.5% (0.045). See the comments in config/generator.yaml for the chosen values.
+    """
+
+    low: float
+    high: float
+
+    @model_validator(mode="after")
+    def _check(self) -> "RateBounds":
+        if not self.low < self.high:
+            raise ValueError(f"rate_bounds: low must be below high, got {self.low}, {self.high}")
+        return self
+
+
 class Entity(_Strict):
     name: str
     home_currency: str
@@ -113,6 +130,7 @@ class GeneratorConfig(_Strict):
     interest_rate_floor: float
     daily_balance_drift: float
     daily_balance_vol: float = Field(ge=0)
+    rate_bounds: RateBounds  # data contract: every rate in positions and curves lies within
     rates: RatesConfig
     fx: FxConfig
 
@@ -147,6 +165,12 @@ class GeneratorConfig(_Strict):
                 f"got {sorted(self.rates.curves)}"
             )
         _check_day_range("floating_reprice_days", self.floating_reprice_days)
+        bounds = self.rate_bounds
+        if not bounds.low <= self.interest_rate_floor < bounds.high:
+            raise ValueError(
+                f"interest_rate_floor {self.interest_rate_floor} is outside rate_bounds "
+                f"[{bounds.low}, {bounds.high}]: every floored rate would break the contract"
+            )
         reporting = self.fx.reporting_currency
         if reporting not in self.currencies:
             raise ValueError(f"fx.reporting_currency {reporting} is not in {self.currencies}")
@@ -199,8 +223,20 @@ class OutlierThresholds(_Strict):
     curve_move: float = Field(gt=0)
 
 
+class ReconciliationSettings(_Strict):
+    """How far arrived totals may differ from the source's control totals before the run stops."""
+
+    relative_tolerance: float = Field(gt=0, lt=1)  # x max(1, |sent|)
+
+
+class ReportSettings(_Strict):
+    max_markdown_rows: int = Field(gt=0)  # longer lists are cut in the Markdown, never the JSON
+
+
 class QualityConfig(_Strict):
     outliers: OutlierThresholds
+    reconciliation: ReconciliationSettings
+    report: ReportSettings
 
 
 def load_quality_config(path: str | Path) -> QualityConfig:
@@ -536,6 +572,7 @@ class MarketRatesConfig(_Strict):
     provenance_file: Path
     user_agent: str
     timeout_seconds: float = Field(gt=0)
+    rate_bounds: RateBounds  # fetched curves are checked against these (keep = generator.yaml)
     fred: SeriesSource
     ecb: SeriesSource
     boe: BoeSource

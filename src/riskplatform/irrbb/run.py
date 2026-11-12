@@ -40,6 +40,7 @@ from riskplatform.config import (
 from riskplatform.irrbb.eve import aggregated_losses, delta_eve, eve_risk, is_outlier
 from riskplatform.irrbb.nii import delta_nii
 from riskplatform.irrbb.repricing import repricing_flows, repricing_gap
+from riskplatform.logs import setup_logging
 from riskplatform.metrics.run import read_validated
 from riskplatform.schemas import rates_schema
 
@@ -85,6 +86,8 @@ def compute_irrbb(
     regimes: dict[str, IrrbbRules],
 ) -> IrrbbResult:
     """IRRBB results for every date and level, under each regime."""
+    if positions.empty:
+        raise ValueError("no positions to measure")
     curves = {
         key: (curve["tenor_years"].to_numpy(), curve["rate"].to_numpy())
         for key, curve in rates.sort_values("tenor_years").groupby(["date", "currency"])
@@ -98,6 +101,8 @@ def compute_irrbb(
     local_eve, local_nii, local_equity = {}, {}, {}
     for (day, entity, currency), group in positions.groupby(["date", "entity", "currency"]):
         key = {"date": day, "level": "entity_currency", "entity": entity, "currency": currency}
+        if (day, currency) not in curves:  # the quality run stops on this; a second guard
+            raise ValueError(f"no {currency} curve on {day.date()}: positions cannot be priced")
         tenors, base = curves[(day, currency)]
         local_equity[(day, entity, currency)] = _equity(group)
         for name, rules in regimes.items():
@@ -189,6 +194,48 @@ def headline(result: IrrbbResult) -> list[str]:
     ]
 
 
+@dataclass(frozen=True)
+class IrrbbRun:
+    result: IrrbbResult
+    summary: dict
+    out_dir: Path  # where the results were written: <out>/<source run id>/
+
+
+def load_irrbb_regimes(
+    irrbb_dir: str | Path, names: tuple[str, ...] = REGIMES
+) -> dict[str, IrrbbRules]:
+    """The named rulebooks from irrbb_dir (<name>.yaml each)."""
+    return {name: load_irrbb_rules(Path(irrbb_dir) / f"{name}.yaml") for name in names}
+
+
+def run_irrbb(
+    validated_dir: str | Path,
+    out_dir: str | Path,
+    cfg: GeneratorConfig,
+    regimes: dict[str, IrrbbRules],
+) -> IrrbbRun:
+    """Read published validated data, calculate IRRBB under each regime, and write the results."""
+    validated_dir = Path(validated_dir)
+    positions, fx, manifest = read_validated(validated_dir, cfg)
+    rates = rates_schema(cfg).validate(pd.read_parquet(validated_dir / "rates.parquet"))
+    result = compute_irrbb(positions, rates, fx, cfg, regimes)
+
+    run_dir = Path(out_dir) / manifest["run_id"]
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("eve", "risk", "nii", "gap"):
+        getattr(result, name).to_parquet(run_dir / f"{name}.parquet", index=False)
+    summary = {
+        "source_run_id": manifest["run_id"],
+        "rates_source": manifest["rates_source"],
+        "regimes": {name: rules.name for name, rules in regimes.items()},
+        "dates": int(result.risk["date"].nunique()),
+        "outliers": outliers(result),
+    }
+    text = json.dumps(summary, indent=2, allow_nan=False)  # strict JSON: NaN fails loudly
+    (run_dir / "summary.json").write_text(text, encoding="utf-8")
+    return IrrbbRun(result=result, summary=summary, out_dir=run_dir)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Calculate IRRBB: delta EVE, delta NII, gap.")
     parser.add_argument("--config", type=Path, default=Path("config/generator.yaml"))
@@ -198,31 +245,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("data/irrbb"))
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging()
     cfg = load_generator_config(args.config)
     names = REGIMES if args.regime == "both" else (args.regime,)
-    regimes = {name: load_irrbb_rules(args.irrbb / f"{name}.yaml") for name in names}
-
-    positions, fx, manifest = read_validated(args.validated, cfg)
-    rates = rates_schema(cfg).validate(pd.read_parquet(args.validated / "rates.parquet"))
-    result = compute_irrbb(positions, rates, fx, cfg, regimes)
-    flagged = outliers(result)
-
-    out_dir = args.out / manifest["run_id"]
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("eve", "risk", "nii", "gap"):
-        getattr(result, name).to_parquet(out_dir / f"{name}.parquet", index=False)
-    summary = {
-        "source_run_id": manifest["run_id"],
-        "rates_source": manifest["rates_source"],
-        "regimes": {name: rules.name for name, rules in regimes.items()},
-        "dates": int(result.risk["date"].nunique()),
-        "outliers": flagged,
-    }
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    for line in headline(result):
+    run = run_irrbb(args.validated, args.out, cfg, load_irrbb_regimes(args.irrbb, names))
+    for line in headline(run.result):
         logger.info(line)
-    logger.info("Wrote IRRBB results to %s (%d outlier results)", out_dir, len(flagged))
+    flagged = run.summary["outliers"]
+    logger.info("Wrote IRRBB results to %s (%d outlier results)", run.out_dir, len(flagged))
     return 1 if flagged else 0
 
 

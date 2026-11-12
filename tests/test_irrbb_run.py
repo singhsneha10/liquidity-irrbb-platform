@@ -99,6 +99,17 @@ def test_basel_and_uk_combine_currencies_differently(cfg):
     assert group_loss("pra") == pytest.approx(-gbp - 0.5 * eur * 0.8)  # gains offset at 50%
 
 
+def test_no_positions_is_a_clear_error(cfg):
+    with pytest.raises(ValueError, match="no positions to measure"):
+        compute_irrbb(_book().iloc[0:0], _rates(), _fx(), cfg, RULES)
+
+
+def test_currency_without_a_curve_is_a_clear_error(cfg):
+    book = _book("BANK_EU", "EUR")
+    with pytest.raises(ValueError, match="no EUR curve on 2026-08-03"):
+        compute_irrbb(book, _rates(currencies=("GBP", "USD")), _fx(), cfg, RULES)
+
+
 @pytest.fixture(scope="module")
 def small_cfg(cfg) -> GeneratorConfig:
     return GeneratorConfig.model_validate({**cfg.model_dump(), "n_days": 2})

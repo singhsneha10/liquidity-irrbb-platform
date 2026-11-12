@@ -39,62 +39,67 @@ def bucket_index(years: np.ndarray, buckets: list[RepricingBucket]) -> np.ndarra
     return np.searchsorted(edges, np.asarray(years, dtype=float), side="left")
 
 
-def _slotted(positions: pd.DataFrame, rules: IrrbbRules) -> pd.DataFrame:
-    """One row per repricing piece: bucket number and signed amount."""
+def _slotted(positions: pd.DataFrame, rules: IrrbbRules) -> tuple[np.ndarray, np.ndarray]:
+    """Every repricing piece, as two arrays: bucket number and signed amount."""
     missing = [column for column in REQUIRED_COLUMNS if column not in positions]
     if missing:
         raise ValueError(f"positions are missing columns {missing}")
-    on_sheet = positions[positions["side"].isin(["asset", "liability"])]
-    sign = np.where(on_sheet["side"] == "asset", 1.0, -1.0)
-    balance = on_sheet["balance_mn"].to_numpy(dtype=float) * sign
+    category = positions["category"].to_numpy()
+    side = positions["side"].to_numpy()
+    balance = positions["balance_mn"].to_numpy(dtype=float)
+    reprice_years = positions["reprice_days"].to_numpy(dtype=float) / DAYS_PER_YEAR
+    on_sheet = (side == "asset") | (side == "liability")
+    signed = np.where(side == "asset", balance, -balance)
     nmd = rules.nmd.categories
-    is_nmd = on_sheet["category"].isin(nmd).to_numpy()
+    is_nmd = np.zeros(len(category), dtype=bool)
+    for name in nmd:
+        is_nmd |= category == name
 
-    regular_years = on_sheet["reprice_days"].to_numpy(dtype=float)[~is_nmd] / DAYS_PER_YEAR
-    pieces = [(regular_years, balance[~is_nmd])]
-    if is_nmd.any():
-        category = on_sheet["category"].to_numpy()[is_nmd]
-        share = np.array([nmd[c].core_share for c in category])
-        years = np.array([nmd[c].core_years for c in category])
-        pieces.append((years, balance[is_nmd] * share))  # core: stays until core_years
-        overnight = np.full(len(category), OVERNIGHT_YEARS)
-        pieces.append((overnight, balance[is_nmd] * (1.0 - share)))  # non-core: overnight
+    regular = on_sheet & ~is_nmd
+    pieces = [(reprice_years[regular], signed[regular])]
+    for name, treatment in nmd.items():
+        rows = on_sheet & (category == name)
+        if rows.any():
+            amount = signed[rows]
+            core = np.full(len(amount), treatment.core_years)
+            pieces.append((core, amount * treatment.core_share))  # core: stays until core_years
+            overnight = np.full(len(amount), OVERNIGHT_YEARS)
+            pieces.append((overnight, amount * (1.0 - treatment.core_share)))  # non-core
     # Swaps (off balance sheet): two legs of the notional. Pay-fixed: -notional when the fixed
     # leg ends (maturity) and +notional at the floating leg's next reset; receive-fixed: the reverse.
-    swaps = positions[positions["category"].isin(rules.derivatives)]
-    for category, rows in swaps.groupby("category"):
-        treatment = rules.derivatives[category]
-        notional = rows["balance_mn"].to_numpy(dtype=float)
+    for name, treatment in rules.derivatives.items():
+        rows = category == name
+        if not rows.any():
+            continue
+        notional = balance[rows]
         fixed_sign = -1.0 if treatment.direction == "pay_fixed" else 1.0
-        fixed_years = rows["reprice_days"].to_numpy(dtype=float) / DAYS_PER_YEAR
-        reset_years = np.full(len(rows), treatment.floating_reset_days / DAYS_PER_YEAR)
-        pieces.append((fixed_years, fixed_sign * notional))
+        reset_years = np.full(len(notional), treatment.floating_reset_days / DAYS_PER_YEAR)
+        pieces.append((reprice_years[rows], fixed_sign * notional))
         pieces.append((reset_years, -fixed_sign * notional))
     years = np.concatenate([p[0] for p in pieces])
     amounts = np.concatenate([p[1] for p in pieces])
-    return pd.DataFrame({"bucket_no": bucket_index(years, rules.buckets), "amount": amounts})
+    return bucket_index(years, rules.buckets), amounts
 
 
 def repricing_flows(positions: pd.DataFrame, rules: IrrbbRules) -> pd.DataFrame:
     """Net repricing cash flow per bucket that has one: bucket, time_years (midpoint), amount."""
-    by_bucket = _slotted(positions, rules).groupby("bucket_no")["amount"].sum()
-    by_bucket = by_bucket[by_bucket != 0]
+    index, amount = _slotted(positions, rules)
+    totals = np.bincount(index, weights=amount, minlength=len(rules.buckets))
+    used = np.flatnonzero(totals != 0)
     buckets = rules.buckets
     return pd.DataFrame(
         {
-            "bucket": [buckets[i].label for i in by_bucket.index],
-            "time_years": [buckets[i].midpoint_years for i in by_bucket.index],
-            "amount": by_bucket.to_numpy(),
+            "bucket": [buckets[i].label for i in used],
+            "time_years": [buckets[i].midpoint_years for i in used],
+            "amount": totals[used],
         }
     )
 
 
 def repricing_gap(positions: pd.DataFrame, rules: IrrbbRules) -> pd.DataFrame:
     """Assets, liabilities, gap and cumulative gap for every bucket, in order."""
-    slotted = _slotted(positions, rules)
+    index, amount = _slotted(positions, rules)
     n = len(rules.buckets)
-    index = slotted["bucket_no"].to_numpy()
-    amount = slotted["amount"].to_numpy()
     assets = np.bincount(index, weights=np.where(amount > 0, amount, 0.0), minlength=n)
     liabilities = np.bincount(index, weights=np.where(amount < 0, -amount, 0.0), minlength=n)
     gap = assets - liabilities

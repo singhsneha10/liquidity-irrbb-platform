@@ -18,6 +18,7 @@ from riskplatform.metrics.run import (
     MetricsInputError,
     _breaches,
     compute_metrics,
+    fx_converter,
     main,
     read_validated,
 )
@@ -84,6 +85,60 @@ def test_mixed_currency_entity_adds_up_in_its_home_currency(cfg):
     ).assign(date=DAY, entity="BANK_UK")
     result = compute_metrics(positions, _fx(usd=0.5), cfg, BASEL, LADDER)
     assert _row(result.lcr, "entity", "BANK_UK")["level1"] == pytest.approx(100 + 200 * 0.5)
+
+
+def test_nothing_owed_meets_the_minimum(cfg):
+    """Only loans: no HQLA and no outflows, so the LCR is 0/0. Nothing is owed: no breach."""
+    loans = pd.DataFrame(
+        [("corporate_loans", "asset", 100.0, 10, "GBP")],
+        columns=["category", "side", "balance_mn", "residual_days", "currency"],
+    ).assign(date=DAY, entity="BANK_UK")
+    result = compute_metrics(loans, _fx(), cfg, BASEL, LADDER)
+    entity = _row(result.lcr, "entity", "BANK_UK")
+    assert (entity["hqla"], entity["net_outflows"]) == (0.0, 0.0)
+    assert (
+        pd.isna(entity["lcr"]) and bool(entity["meets_minimum"]) is True
+    )  # undefined, not a breach
+    assert _breaches(result) == []
+    json.dumps(_breaches(result), allow_nan=False)  # summary stays strict JSON
+
+
+def test_meets_minimum_agrees_with_the_ratio_when_it_exists(generated_metrics):
+    _, result = generated_metrics
+    for table, metric in ((result.lcr, "lcr"), (result.nsfr, "nsfr")):
+        tested = table[table["level"] != "entity_currency"]
+        by_ratio = tested[metric] >= tested["minimum"]
+        assert (tested["meets_minimum"].astype(bool) == by_ratio).all()
+
+
+def test_no_positions_is_a_clear_error(cfg):
+    with pytest.raises(ValueError, match="no positions to measure"):
+        compute_metrics(_worked_example().iloc[0:0], _fx(), cfg, BASEL, LADDER)
+
+
+def test_validated_folder_without_positions_is_refused(small_cfg, tmp_path):
+    validated = _publish(small_cfg, tmp_path)
+    files = list((validated / "positions").glob("*.parquet"))
+    for path in files:  # every file present but empty (header only)
+        pd.read_parquet(path).iloc[0:0].to_parquet(path, index=False)
+    with pytest.raises(MetricsInputError, match="every positions file is empty"):
+        read_validated(validated, small_cfg)
+    for path in files:
+        path.unlink()
+    with pytest.raises(MetricsInputError, match="no positions files"):
+        read_validated(validated, small_cfg)
+
+
+def test_missing_fx_rate_is_an_error_not_a_silent_zero():
+    second_day = DAY + pd.Timedelta(days=1)
+    fx = pd.concat([_fx(), _fx().assign(date=second_day)], ignore_index=True)
+    no_usd = fx_converter(fx[fx["currency"] != "USD"])  # USD never quoted
+    with pytest.raises(ValueError, match="FX rate is missing"):
+        no_usd(pd.Series([DAY]), pd.Series(["USD"]))
+    gap = fx_converter(fx.drop(fx.index[(fx["currency"] == "USD") & (fx["date"] == second_day)]))
+    assert gap(pd.Series([DAY]), pd.Series(["USD"])) == pytest.approx([0.5])
+    with pytest.raises(ValueError, match="FX rate is missing"):  # USD quoted, not on this day
+        gap(pd.Series([second_day]), pd.Series(["USD"]))
 
 
 @pytest.fixture(scope="module")

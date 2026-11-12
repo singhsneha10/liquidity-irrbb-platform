@@ -1,14 +1,26 @@
 """Reconciliation to control totals: transit losses stop the run, quarantine is explained."""
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
+from riskplatform.config import GeneratorConfig, load_quality_config
 from riskplatform.controls import file_totals, read_control_totals, write_control_totals
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.quality.reconcile import ReconciliationFailed, reconcile
 from riskplatform.quality.report import table_of
 
 FIRST_DAY = "positions/date=2026-08-03.parquet"
+QUALITY = load_quality_config(Path(__file__).resolve().parents[1] / "config" / "quality.yaml")
+TOLERANCE = QUALITY.reconciliation.relative_tolerance
+
+
+@pytest.fixture(scope="module")
+def cfg(cfg) -> GeneratorConfig:
+    """The same bank over 3 days (overrides conftest's 60-day cfg here): every test writes and
+    reads back fresh files, and reconciliation needs only a few of them."""
+    return GeneratorConfig.model_validate({**cfg.model_dump(), "n_days": 3})
 
 
 @pytest.fixture(scope="module")
@@ -42,7 +54,9 @@ def test_control_totals_cover_every_file_written(raw_dir):
 
 def test_clean_files_reconcile_with_nothing_quarantined(raw_dir):
     arrived = _read_raw(raw_dir)
-    result = reconcile(read_control_totals(raw_dir), arrived, validated=arrived)
+    result = reconcile(
+        read_control_totals(raw_dir), arrived, validated=arrived, tolerance=TOLERANCE
+    )
     files = result.files
     assert (files["source_rows"] == files["arrived_rows"]).all()
     assert (files["quarantined_rows"] == 0).all()
@@ -79,8 +93,18 @@ def test_data_lost_or_changed_after_sending_stops_the_run(raw_dir, damage, messa
     arrived = _read_raw(raw_dir)
     damage(arrived)
     with pytest.raises(ReconciliationFailed, match=message) as stopped:
-        reconcile(read_control_totals(raw_dir), arrived, validated=arrived)
+        reconcile(read_control_totals(raw_dir), arrived, validated=arrived, tolerance=TOLERANCE)
     assert not stopped.value.reconciliation.files.empty  # the tables still reach the report
+
+
+def test_tolerance_from_config_decides_what_counts_as_a_change(raw_dir):
+    """A change of 10 mn in a total of thousands: a break at 1e-9, accepted at 1% (relative)."""
+    arrived = _read_raw(raw_dir)
+    _value_changed(arrived)
+    control = read_control_totals(raw_dir)
+    with pytest.raises(ReconciliationFailed):
+        reconcile(control, arrived, validated=arrived, tolerance=TOLERANCE)
+    reconcile(control, arrived, validated=arrived, tolerance=0.01)  # no failure
 
 
 def test_quarantined_row_is_explained_in_rows_and_balance(raw_dir):
@@ -89,7 +113,7 @@ def test_quarantined_row_is_explained_in_rows_and_balance(raw_dir):
     dropped = arrived[FIRST_DAY].iloc[0]
     validated[FIRST_DAY] = arrived[FIRST_DAY].iloc[1:]  # as if row 0 was quarantined
 
-    result = reconcile(read_control_totals(raw_dir), arrived, validated)
+    result = reconcile(read_control_totals(raw_dir), arrived, validated, tolerance=TOLERANCE)
     day = result.files.set_index("file").loc[FIRST_DAY]
     sent = len(arrived[FIRST_DAY])
     assert (day["arrived_rows"], day["validated_rows"], day["quarantined_rows"]) == (
@@ -115,7 +139,9 @@ def test_bad_value_sent_by_the_source_reconciles(raw_dir):
     arrived[FIRST_DAY].loc[0, "balance_mn"] = "abc"
     sent = {name: (table_of(name), frame) for name, frame in arrived.items()}
     write_control_totals(raw_dir, sent)
-    reconcile(read_control_totals(raw_dir), arrived, validated=arrived)  # no failure
+    reconcile(
+        read_control_totals(raw_dir), arrived, validated=arrived, tolerance=TOLERANCE
+    )  # no failure
 
 
 def test_missing_control_file_is_an_error(tmp_path):

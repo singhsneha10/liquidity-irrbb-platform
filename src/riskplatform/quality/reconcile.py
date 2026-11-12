@@ -13,10 +13,6 @@ import pandas as pd
 from riskplatform.controls import BALANCE_KEYS, file_totals
 from riskplatform.quality.rows import FileLevelError
 
-# Relative tolerance on balance totals. Both sides sum the same way, so any real difference
-# is far larger than this; it only absorbs floating-point rounding.
-TOLERANCE = 1e-9
-
 FILE_COLUMNS = [
     "file",
     "table",
@@ -55,18 +51,22 @@ def _balances(totals: dict, column: str) -> pd.DataFrame:
     return frame.rename(columns={"balance_mn": column})
 
 
-def _differs(arrived: float, sent: float) -> bool:
-    return abs(arrived - sent) > TOLERANCE * max(1.0, abs(sent))
+def _differs(arrived: float, sent: float, tolerance: float) -> bool:
+    """True if arrived differs from sent by more than tolerance x max(1, |sent|)."""
+    return abs(arrived - sent) > tolerance * max(1.0, abs(sent))
 
 
 def reconcile(
     control: dict[str, dict],
     arrived: dict[str, pd.DataFrame],
     validated: dict[str, pd.DataFrame],
+    *,
+    tolerance: float,
 ) -> Reconciliation:
     """Compare sent (control totals), arrived (raw tables) and validated tables, file by file.
 
-    All three are keyed by the file's path relative to the raw folder.
+    All three are keyed by the file's path relative to the raw folder. Balance totals may differ
+    by tolerance x max(1, |sent|) (config/quality.yaml, reconciliation.relative_tolerance).
     """
     problems = [f"{name}: sent but did not arrive" for name in sorted(set(control) - set(arrived))]
     problems += [
@@ -102,7 +102,7 @@ def reconcile(
         balances[amounts] = balances[amounts].fillna(0.0)
         balances["quarantined_mn"] = balances["arrived_mn"] - balances["validated_mn"]
         for row in balances.itertuples():
-            if _differs(row.arrived_mn, row.source_mn):
+            if _differs(row.arrived_mn, row.source_mn, tolerance):
                 problems.append(
                     f"{name}: balance_mn for {row.entity}/{row.currency}/{row.side} "
                     f"sent {row.source_mn:,.2f}, arrived {row.arrived_mn:,.2f}"

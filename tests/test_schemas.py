@@ -2,7 +2,12 @@ import pandas as pd
 import pytest
 from pandera.errors import SchemaError, SchemaErrors
 
-from riskplatform.schemas import positions_schema, quarantine_schema, rates_schema
+from riskplatform.schemas import (
+    market_curves_schema,
+    positions_schema,
+    quarantine_schema,
+    rates_schema,
+)
 
 # pandera raises SchemaError for bad values and SchemaErrors for structural problems.
 VALIDATION_ERRORS = (SchemaError, SchemaErrors)
@@ -79,6 +84,25 @@ def test_valid_rates_pass(cfg):
 def test_out_of_range_rate_fails(cfg):
     with pytest.raises(VALIDATION_ERRORS):
         rates_schema(cfg).validate(make_rates(rate=0.9))
+
+
+def test_percent_typed_as_decimal_fails(cfg):
+    """4.5 meant as 4.5% (0.045) is the error the bounds are there to catch."""
+    with pytest.raises(VALIDATION_ERRORS):
+        positions_schema(cfg).validate(make_positions(interest_rate=4.5))
+
+
+def test_rate_bounds_come_from_config(cfg):
+    """Tighten the bounds in config and the same 3% rate is refused: no limit lives in code."""
+    tight = cfg.model_validate({**cfg.model_dump(), "rate_bounds": {"low": -0.01, "high": 0.02}})
+    positions_schema(cfg).validate(make_positions(interest_rate=0.03))
+    with pytest.raises(VALIDATION_ERRORS):
+        positions_schema(tight).validate(make_positions(interest_rate=0.03))
+    with pytest.raises(VALIDATION_ERRORS):
+        rates_schema(tight).validate(make_rates(rate=0.03))
+    market = market_curves_schema(cfg.currencies, tight.rate_bounds)
+    with pytest.raises(VALIDATION_ERRORS):
+        market.validate(make_rates(rate=0.03).assign(source="boe"))
 
 
 def make_quarantine(**overrides) -> pd.DataFrame:

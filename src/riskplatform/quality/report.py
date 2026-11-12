@@ -13,8 +13,6 @@ from riskplatform.quality.files import FileCheckReport
 from riskplatform.quality.reconcile import Reconciliation
 from riskplatform.schemas import RAW_TABLES
 
-MAX_MARKDOWN_ROWS = 20  # longer lists are cut in the Markdown; the JSON always has everything
-
 
 def table_of(file_name: str) -> str:
     """The raw table a file belongs to, from its path relative to the raw folder.
@@ -104,18 +102,19 @@ def build_report(
     return report
 
 
-def _md_table(rows: list[dict], columns: list[str]) -> list[str]:
+def _md_table(rows: list[dict], columns: list[str], max_rows: int) -> list[str]:
+    """A Markdown table of the first max_rows rows, with a note if any were cut."""
     if not rows:
         return ["None.", ""]
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
-    for row in rows[:MAX_MARKDOWN_ROWS]:
+    for row in rows[:max_rows]:
         cells = [
             "" if row[c] is None else f"{row[c]:,.2f}" if isinstance(row[c], float) else str(row[c])
             for c in columns
         ]
         lines.append("| " + " | ".join(cells) + " |")
-    if len(rows) > MAX_MARKDOWN_ROWS:
-        lines.append(f"\n... and {len(rows) - MAX_MARKDOWN_ROWS} more (see breaks_report.json).")
+    if len(rows) > max_rows:
+        lines.append(f"\n... and {len(rows) - max_rows} more (see breaks_report.json).")
     return [*lines, ""]
 
 
@@ -127,9 +126,13 @@ def _section(title: str, body: list[str] | None) -> list[str]:
     ]
 
 
-def render_markdown(report: dict) -> str:
-    """A one-page, human-readable breaks report."""
+def render_markdown(report: dict, max_rows: int) -> str:
+    """A one-page, human-readable breaks report; each table shows at most max_rows rows."""
     rows = report["rows"]
+
+    def table(table_rows: list[dict], columns: list[str]) -> list[str]:
+        return _md_table(table_rows, columns, max_rows)
+
     lines = [
         f"# Breaks report: run {report['run_id']}",
         "",
@@ -143,7 +146,7 @@ def render_markdown(report: dict) -> str:
 
     lines += _section(
         "Rows",
-        _md_table(
+        table(
             [
                 {"table": t, "arrived": rows["arrived"][t], "validated": rows["validated"][t]}
                 for t in RAW_TABLES
@@ -154,14 +157,14 @@ def render_markdown(report: dict) -> str:
     )
     lines += _section(
         "Quarantine by check",
-        _md_table(report["quarantine_by_check"], ["table", "check", "column", "records"]),
+        table(report["quarantine_by_check"], ["table", "check", "column", "records"]),
     )
     recon = report["reconciliation"]
     lines += _section(
         "Reconciliation to source (quarantined amounts)",
         None
         if recon is None
-        else _md_table(
+        else table(
             recon["balances_with_quarantine"],
             ["file", "entity", "currency", "side", "source_mn", "validated_mn", "quarantined_mn"],
         ),
@@ -171,7 +174,7 @@ def render_markdown(report: dict) -> str:
         "File-level checks",
         None
         if checks is None
-        else _md_table(
+        else table(
             [{**c, "kind": kind} for kind in ("stops", "warnings") for c in checks[kind]],
             ["kind", "name", "passed", "offending_rows"],
         ),
@@ -181,13 +184,14 @@ def render_markdown(report: dict) -> str:
         "Outlier warnings (for review; nothing quarantined)",
         None
         if outliers is None
-        else _md_table(outliers["items"], ["check", "date", "subject", "value", "threshold"]),
+        else table(outliers["items"], ["check", "date", "subject", "value", "threshold"]),
     )
     return "\n".join(lines)
 
 
-def write_report(run_dir: Path, report: dict) -> None:
-    """Save breaks_report.json and breaks_report.md in the run's folder."""
+def write_report(run_dir: Path, report: dict, max_markdown_rows: int) -> None:
+    """Save breaks_report.json (every row) and breaks_report.md (tables cut) in the run's folder."""
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "breaks_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    (run_dir / "breaks_report.md").write_text(render_markdown(report), encoding="utf-8")
+    markdown = render_markdown(report, max_markdown_rows)
+    (run_dir / "breaks_report.md").write_text(markdown, encoding="utf-8")

@@ -6,11 +6,16 @@ from typing import get_args
 import pandas as pd
 import pandera.pandas as pa
 
-from riskplatform.config import GeneratorConfig, RateType, Side
+from riskplatform.config import GeneratorConfig, RateBounds, RateType, Side
 
 SIDES = list(get_args(Side))
 RATE_TYPES = list(get_args(RateType))
 RAW_TABLES = ["positions", "rates", "fx"]
+
+
+def _within(bounds: RateBounds) -> pa.Check:
+    """A rate between the configured sanity bounds (rate_bounds in config), inclusive."""
+    return pa.Check.in_range(bounds.low, bounds.high)
 
 
 def positions_schema(cfg: GeneratorConfig) -> pa.DataFrameSchema:
@@ -26,7 +31,7 @@ def positions_schema(cfg: GeneratorConfig) -> pa.DataFrameSchema:
             "side": pa.Column(str, pa.Check.isin(SIDES)),
             "balance_mn": pa.Column(float, pa.Check.gt(0)),
             "rate_type": pa.Column(str, pa.Check.isin(RATE_TYPES)),
-            "interest_rate": pa.Column(float, pa.Check.in_range(-0.05, 0.25)),
+            "interest_rate": pa.Column(float, _within(cfg.rate_bounds)),
             "residual_days": pa.Column(int, pa.Check.ge(1)),
             "reprice_days": pa.Column(int, pa.Check.ge(1)),
         },
@@ -59,7 +64,7 @@ def rates_schema(cfg: GeneratorConfig) -> pa.DataFrameSchema:
             "date": pa.Column("datetime64[ns]"),
             "currency": pa.Column(str, pa.Check.isin(cfg.currencies)),
             "tenor_years": pa.Column(float, pa.Check.gt(0)),
-            "rate": pa.Column(float, pa.Check.in_range(-0.05, 0.25)),
+            "rate": pa.Column(float, _within(cfg.rate_bounds)),
         },
         unique=["date", "currency", "tenor_years"],
         strict=True,
@@ -95,7 +100,7 @@ def fx_schema(cfg: GeneratorConfig) -> pa.DataFrameSchema:
 MARKET_SOURCES = ["fred", "ecb", "boe"]
 
 
-def market_curves_schema(currencies: list[str]) -> pa.DataFrameSchema:
+def market_curves_schema(currencies: list[str], bounds: RateBounds) -> pa.DataFrameSchema:
     """Contract for fetched real yield curves (one row per date, currency and source tenor).
 
     Tenors are each source's own points; the generator interpolates them onto its tenor grid.
@@ -105,7 +110,7 @@ def market_curves_schema(currencies: list[str]) -> pa.DataFrameSchema:
             "date": pa.Column("datetime64[ns]"),
             "currency": pa.Column(str, pa.Check.isin(currencies)),
             "tenor_years": pa.Column(float, pa.Check.gt(0)),
-            "rate": pa.Column(float, pa.Check.in_range(-0.05, 0.25)),
+            "rate": pa.Column(float, _within(bounds)),
             "source": pa.Column(str, pa.Check.isin(MARKET_SOURCES)),
         },
         unique=["date", "currency", "tenor_years"],

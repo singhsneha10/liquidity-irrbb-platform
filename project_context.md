@@ -51,8 +51,21 @@ data: hand-worked examples written before the code, and proofs against published
 - Config files (all validated by `src/riskplatform/config.py`, unknown keys rejected):
   `config/generator.yaml` (synthetic bank, default, offline), `config/generator_real.yaml`
   (extends it via `base:`; real curves and FX from saved files), `config/market_rates.yaml`
-  (fetch sources), `config/quality.yaml` (outlier thresholds), `config/liquidity/basel.yaml`,
-  `pra.yaml` (rulebooks), `ladder.yaml` (buckets), `config/irrbb/basel.yaml`, `pra.yaml`.
+  (fetch sources), `config/quality.yaml` (outlier thresholds, reconciliation tolerance, report
+  rows), `config/liquidity/basel.yaml`, `pra.yaml` (rulebooks), `ladder.yaml` (buckets),
+  `config/irrbb/basel.yaml`, `pra.yaml`. No limits in code: rate sanity bounds (`rate_bounds`,
+  -5% to 25%) are in `generator.yaml` and `market_rates.yaml` (a test keeps them equal).
+- One command (`riskplatform-run`, `python -m riskplatform.pipeline`, or `make run`) runs
+  generate -> raw checks -> quality -> metrics -> IRRBB and stops at the first stage that stops.
+  Exit codes: 0 clean, 1 stopped or error, 2 ran but found a breach or an IRRBB outlier (the
+  separate commands still exit 1 on findings; schedulers should call the pipeline).
+- Logging: one setup (`riskplatform/logs.py`), UTC timestamps, level from the
+  `RISKPLATFORM_LOG_LEVEL` environment variable; each pipeline run writes
+  `data/logs/pipeline-<UTC time>.log` (tracebacks included).
+- A liquidity minimum is tested on amounts (HQLA >= 100% x net outflows; ASF >= 100% x RSF), so
+  0/0 (nothing owed) meets it; summaries are strict JSON (NaN fails loudly).
+- Calculations run on numpy arrays inside each function (pandas overhead per group was the cost):
+  metrics 27s -> 3s, IRRBB 6.5s -> 2.5s, results unchanged (checked against a saved snapshot).
 - Synthetic bank: 3 entities x 3 currencies x 14 product types (924 positions, 60 business days,
   Mon-Fri). Assets = liabilities + 6% equity per entity and currency on day one. Foreign books
   hold fewer reserves (5%) and government bonds (8%) than the 20% default foreign weight.
@@ -86,14 +99,18 @@ data: hand-worked examples written before the code, and proofs against published
 | 3. Data quality layer | Done: quarantine, reconciliation to control totals, STOP/WARNING checks, outliers, quality run, breaks report, error-injection demo |
 | 4. Liquidity metrics | Done: Basel + UK PRA rulebooks (sourced), worked example, LCR, NSFR, maturity ladder, metrics run, methodology doc |
 | 5. Interest rate risk (IRRBB) | Done: Basel + UK PRA rulebooks (sourced), worked example (reproduces SRP31.92), shocks + UK floor, repricing gap, delta EVE + aggregation + outlier test, delta NII, IRRBB run, methodology doc; swap hedges added to the generator |
-| 6-10. Hardening, cloud + orchestration, alerts + Tableau, model validation, deploy | Not started |
+| 6. Testing and hardening | Done: one-command pipeline with exit codes (6.1), shared logging + run log files (6.2), edge cases: missing curve now a STOP, missing book a WARNING, LCR 0/0, empty folders (6.3), limits moved to config (6.4), metrics/IRRBB about 6x faster, slow tests shortened (6.5), 98% branch coverage and 16/16 planted formula bugs caught (6.6). 423 tests, about 1 minute. |
+| 7-10. Cloud + orchestration, alerts + Tableau, model validation, deploy | Not started |
 
 ## Next steps
-1. Phase 6 (hardening): one command for the whole pipeline, logging, edge cases (empty days,
-   missing currencies), faster tests.
+1. Phase 7 (cloud and orchestration): set the AWS billing alarm first; then storage (S3, or
+   DuckDB locally) and a scheduled daily run (Dagster or Airflow) calling the pipeline command.
 2. Generator realism, still open: hedge size per book (BANK_UK is an IRRBB outlier at 20.5% of
-   Tier 1 while the group is 14.2%); calibrate proportions to named public disclosures.
+   Tier 1 while the group is 14.2%; the pipeline exits 2 on every run because of it); calibrate
+   proportions to named public disclosures.
 3. Walk through the code in plain words (see "Walkthrough debt").
+4. Not covered by tests on purpose: the live HTTP fetch and `main()` in
+   `ingestion/market_rates.py` (needs the internet; the parsers are tested on sample replies).
 
 ## Assumptions to review before this goes on a resume
 - `docs/liquidity_methodology.md`, "Assumptions and simplifications" (19 items + swaps).
@@ -108,6 +125,10 @@ Explained when written, but worth a second pass: everything under `src/riskplatf
 `tests/`. Most important first: `metrics/lcr.py`, `metrics/nsfr.py`, `irrbb/shocks.py`,
 `irrbb/eve.py`, `irrbb/repricing.py`, `irrbb/run.py`, `metrics/run.py`, `quality/run.py`,
 `quality/rows.py`, `ingestion/generate.py`, `validation/check_raw.py`.
+Added in Phase 6, worth a line-by-line pass: `pipeline.py` (stages, exit codes), `logs.py`,
+`_factors` in `metrics/nsfr.py` (the searchsorted band lookup), `_slotted` in
+`irrbb/repricing.py`, the SQL of `curves_cover_every_currency` and `every_book_every_day` in
+`validation/check_raw.py`, and `_meets` in `metrics/run.py` (minimum tested on amounts).
 
 ## How to run
 First time on a new machine:
@@ -122,7 +143,14 @@ pytest
 ruff check .
 ruff format --check .
 ```
-Pipeline (synthetic, offline):
+Whole pipeline in one command (synthetic, offline; exit 0 clean, 1 stopped, 2 findings):
+```
+riskplatform-run                                 # or: python -m riskplatform.pipeline / make run
+$env:RISKPLATFORM_LOG_LEVEL = "DEBUG"            # optional: more detail (default INFO)
+```
+Coverage report: `pytest --cov=riskplatform --cov-branch --cov-report=term-missing`
+
+Stage by stage (the same functions the pipeline calls):
 ```
 python -m riskplatform.ingestion.generate        # data/raw/
 python -m riskplatform.validation.check_raw      # independent checks of the generator output

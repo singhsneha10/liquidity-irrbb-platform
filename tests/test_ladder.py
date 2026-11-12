@@ -113,3 +113,11 @@ def test_swap_notional_is_neither_a_cash_flow_nor_contingent():
     )
     assert ladder.contingent == 200  # only the undrawn line
     assert (ladder.table[["inflows", "outflows"]] == 0).all().all()
+
+
+def test_missing_column_is_a_clear_error():
+    positions = pd.DataFrame(
+        [("govt_bonds", "asset", 100.0)], columns=["category", "side", "balance_mn"]
+    )
+    with pytest.raises(ValueError, match="residual_days"):
+        build_ladder(positions, LADDER)

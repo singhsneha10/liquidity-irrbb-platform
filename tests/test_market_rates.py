@@ -179,6 +179,18 @@ def test_fetch_curves_covers_every_currency_in_decimals(market_cfg):
     assert gbp[(pd.Timestamp("2026-07-21"), 0.5)] == pytest.approx(0.043)  # current month wins
 
 
+def test_boe_archive_without_the_curve_workbook_is_an_error(market_cfg):
+    """If the Bank renames its workbooks, say so, rather than save a file with no GBP curve."""
+    responses = fake_fetch(market_cfg)
+    renamed = zip_of({"Renamed nominal workbook.xlsx": b"not read"})
+
+    def fetch(url):
+        return renamed if url in market_cfg.boe.archive_urls else responses(url)
+
+    with pytest.raises(ValueError, match="boe: no workbook containing"):
+        fetch_curves(market_cfg, fetch)
+
+
 def test_series_with_no_data_is_an_error(market_cfg):
     fetch = fake_fetch(market_cfg)
     empty_url = market_cfg.ecb.url.format(series="SR_10Y", start=market_cfg.start_date.isoformat())

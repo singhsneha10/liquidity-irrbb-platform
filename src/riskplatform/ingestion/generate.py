@@ -14,6 +14,7 @@ import pandas as pd
 
 from riskplatform.config import GeneratorConfig, load_generator_config
 from riskplatform.controls import write_control_totals
+from riskplatform.logs import setup_logging
 from riskplatform.schemas import (
     fx_schema,
     market_curves_schema,
@@ -235,7 +236,7 @@ def load_real_curves(cfg: GeneratorConfig, dates: pd.DatetimeIndex) -> np.ndarra
         raise FileNotFoundError(f"{path} not found. {FETCH_HINT}")
     stored = pd.read_parquet(path)
     stored = stored[stored["currency"].isin(cfg.currencies)]
-    stored = market_curves_schema(cfg.currencies).validate(stored)
+    stored = market_curves_schema(cfg.currencies, cfg.rate_bounds).validate(stored)
 
     grid = np.array(cfg.rates.tenors_years)
     curves = np.empty((len(dates), len(cfg.currencies), len(grid)))
@@ -385,7 +386,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=Path("data/raw"))
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging()
     cfg = load_generator_config(args.config)
     raw = generate(cfg)
     write_outputs(raw, args.out)

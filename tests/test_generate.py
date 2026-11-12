@@ -381,3 +381,11 @@ def test_every_book_has_swap_hedges(cfg, positions):
         cfg.currencies
     )
     assert (swaps["side"] == "off_balance_sheet").all()
+
+
+def test_real_fx_missing_a_currency_is_an_error(cfg, tmp_path):
+    no_usd = [("USD", day) for day in CURVE_DAYS]
+    fx_file = _write_fx(cfg, tmp_path / "fx.parquet", drop=no_usd)
+    curves = _write_curves(cfg, tmp_path / "curves.parquet")
+    with pytest.raises(ValueError, match="no FX rates for USD"):
+        generate(_real_cfg(cfg, curves, fx_file=fx_file))

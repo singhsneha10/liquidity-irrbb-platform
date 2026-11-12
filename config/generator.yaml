@@ -18,6 +18,13 @@ interest_rate_floor: 0.0   # no position earns or pays below zero (simplificatio
 daily_balance_drift: 0.0002
 daily_balance_vol: 0.004
 
+# Data contract: every interest rate and curve yield must lie within these bounds (decimals), or
+# the row is quarantined. Sanity bounds, not a market view: they catch values no real rate could
+# take, above all a percent typed as a decimal (4.5 for 0.045). Context: the lowest policy rate
+# in a major economy was -0.75% (Swiss National Bank, 2015-2022); UK Bank Rate peaked at 17%
+# (1979) and the US prime rate at 21.5% (1980). Keep in step with config/market_rates.yaml.
+rate_bounds: {low: -0.05, high: 0.25}
+
 rates:
   source: synthetic  # offline default; config/generator_real.yaml switches to saved real curves
   tenors_years: [0.0833, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0]

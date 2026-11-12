@@ -37,7 +37,7 @@ def _documented(section: str, table: str) -> list[str]:
     [
         ("1. Positions", positions_schema),
         ("2. Market rates", rates_schema),
-        ("3. Saved real curves", lambda cfg: market_curves_schema(cfg.currencies)),
+        ("3. Saved real curves", lambda cfg: market_curves_schema(cfg.currencies, cfg.rate_bounds)),
         ("4. FX rates", fx_schema),
     ],
 )

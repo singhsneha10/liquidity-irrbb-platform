@@ -15,6 +15,11 @@ which run the results came from. Results for every date, at three levels:
 Converting: amount x (reporting per unit of its currency) / (reporting per unit of the target).
 Caps and the inflow cap are applied to the combined amounts, not per currency and then summed.
 
+Meeting a minimum is tested on the amounts, HQLA >= minimum x net outflows (and ASF >= minimum x
+RSF), not on the ratio. That is the same test whenever the ratio exists, and it also settles
+0/0: a book with no net outflows and no HQLA owes nothing, so it meets the minimum (its ratio
+stays NaN, "undefined", in the table).
+
 Simplification: the group figure assumes liquidity and funding can move freely between
 entities. In practice, surplus liquidity that cannot be transferred out of a subsidiary may not
 count at group level, so the entity figures are the stricter view.
@@ -42,6 +47,7 @@ from riskplatform.config import (
     load_ladder_config,
     load_liquidity_rules,
 )
+from riskplatform.logs import setup_logging
 from riskplatform.metrics.ladder import build_ladder
 from riskplatform.metrics.lcr import calculate_lcr
 from riskplatform.metrics.nsfr import calculate_nsfr
@@ -83,7 +89,11 @@ def read_validated(
             f"uses {cfg.rates.source!r}; run the quality layer with the same config"
         )
     files = sorted((validated_dir / "positions").glob("date=*.parquet"))
+    if not files:
+        raise MetricsInputError(f"{validated_dir} has no positions files")
     positions = pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
+    if positions.empty:
+        raise MetricsInputError(f"{validated_dir}: every positions file is empty")
     positions = positions_schema(cfg).validate(positions)  # safety net: the contract still holds
     fx = fx_schema(cfg).validate(pd.read_parquet(validated_dir / "fx.parquet"))
     return positions, fx, manifest
@@ -135,9 +145,12 @@ def metric_groups(
         yield {"date": day, "level": "group", "entity": None, "currency": reporting}, group
 
 
-def _meets(level: str, ratio: float, minimum: float) -> bool | None:
-    """Minimums apply to entity and group results; per-currency results are monitoring only."""
-    return None if level == "entity_currency" else bool(ratio >= minimum)
+def _meets(level: str, numerator: float, denominator: float, minimum: float) -> bool | None:
+    """numerator >= minimum x denominator, for entity and group results (see module notes).
+
+    Per-currency results are monitoring only (None).
+    """
+    return None if level == "entity_currency" else bool(numerator >= minimum * denominator)
 
 
 def compute_metrics(
@@ -148,6 +161,8 @@ def compute_metrics(
     ladder_cfg: LadderConfig,
 ) -> MetricsResult:
     """LCR and NSFR for each regime, and the ladder, for every date and level."""
+    if positions.empty:
+        raise ValueError("no positions to measure")
     lcr_rows, nsfr_rows, ladder_frames = [], [], []
     for key, group in metric_groups(positions, fx, cfg):
         for name, rules in regimes.items():
@@ -170,7 +185,9 @@ def compute_metrics(
                     "net_outflows": lcr.net_outflows,
                     "lcr": lcr.ratio,
                     "minimum": lcr_minimum,
-                    "meets_minimum": _meets(key["level"], lcr.ratio, lcr_minimum),
+                    "meets_minimum": _meets(
+                        key["level"], stock.total, lcr.net_outflows, lcr_minimum
+                    ),
                 }
             )
             nsfr = calculate_nsfr(group, rules)
@@ -184,7 +201,7 @@ def compute_metrics(
                     "equity": nsfr.equity,
                     "nsfr": nsfr.ratio,
                     "minimum": nsfr_minimum,
-                    "meets_minimum": _meets(key["level"], nsfr.ratio, nsfr_minimum),
+                    "meets_minimum": _meets(key["level"], nsfr.asf, nsfr.rsf, nsfr_minimum),
                 }
             )
         ladder = build_ladder(group, ladder_cfg)
@@ -237,7 +254,46 @@ def write_metrics(out_dir: Path, result: MetricsResult, summary: dict) -> None:
     result.lcr.to_parquet(out_dir / "lcr.parquet", index=False)
     result.nsfr.to_parquet(out_dir / "nsfr.parquet", index=False)
     result.ladder.to_parquet(out_dir / "ladder.parquet", index=False)
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    text = json.dumps(summary, indent=2, allow_nan=False)  # strict JSON: NaN fails loudly
+    (out_dir / "summary.json").write_text(text, encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class MetricsRun:
+    result: MetricsResult
+    summary: dict
+    out_dir: Path  # where the results were written: <out>/<source run id>/
+
+
+def load_liquidity_regimes(
+    liquidity_dir: str | Path, names: tuple[str, ...] = REGIMES
+) -> dict[str, LiquidityRules]:
+    """The named rulebooks from liquidity_dir (<name>.yaml each)."""
+    return {name: load_liquidity_rules(Path(liquidity_dir) / f"{name}.yaml") for name in names}
+
+
+def run_metrics(
+    validated_dir: str | Path,
+    out_dir: str | Path,
+    cfg: GeneratorConfig,
+    regimes: dict[str, LiquidityRules],
+    ladder_cfg: LadderConfig,
+) -> MetricsRun:
+    """Read published validated data, calculate every metric, and write the results."""
+    positions, fx, manifest = read_validated(validated_dir, cfg)
+    result = compute_metrics(positions, fx, cfg, regimes, ladder_cfg)
+    summary = {
+        "source_run_id": manifest["run_id"],
+        "source_breaks_report": manifest.get("breaks_report"),
+        "rates_source": manifest["rates_source"],
+        "regimes": {name: rules.name for name, rules in regimes.items()},
+        "dates": int(result.lcr["date"].nunique()),
+        "rows": {"lcr": len(result.lcr), "nsfr": len(result.nsfr), "ladder": len(result.ladder)},
+        "breaches": _breaches(result),
+    }
+    run_dir = Path(out_dir) / manifest["run_id"]
+    write_metrics(run_dir, result, summary)
+    return MetricsRun(result=result, summary=summary, out_dir=run_dir)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -249,30 +305,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("data/metrics"))
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging()
     cfg = load_generator_config(args.config)
     names = REGIMES if args.regime == "both" else (args.regime,)
-    regimes = {name: load_liquidity_rules(args.liquidity / f"{name}.yaml") for name in names}
+    regimes = load_liquidity_regimes(args.liquidity, names)
     ladder_cfg = load_ladder_config(args.liquidity / "ladder.yaml")
 
-    positions, fx, manifest = read_validated(args.validated, cfg)
-    result = compute_metrics(positions, fx, cfg, regimes, ladder_cfg)
-    breaches = _breaches(result)
-    summary = {
-        "source_run_id": manifest["run_id"],
-        "source_breaks_report": manifest.get("breaks_report"),
-        "rates_source": manifest["rates_source"],
-        "regimes": {name: rules.name for name, rules in regimes.items()},
-        "dates": int(result.lcr["date"].nunique()),
-        "rows": {"lcr": len(result.lcr), "nsfr": len(result.nsfr), "ladder": len(result.ladder)},
-        "breaches": breaches,
-    }
-    out_dir = args.out / manifest["run_id"]
-    write_metrics(out_dir, result, summary)
-
-    for line in headline(result):
+    run = run_metrics(args.validated, args.out, cfg, regimes, ladder_cfg)
+    for line in headline(run.result):
         logger.info(line)
-    logger.info("Wrote metrics to %s (%d breaches)", out_dir, len(breaches))
+    breaches = run.summary["breaches"]
+    logger.info("Wrote metrics to %s (%d breaches)", run.out_dir, len(breaches))
     return 1 if breaches else 0
 
 

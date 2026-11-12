@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from riskplatform.ingestion.generate import generate
-from riskplatform.quality.rows import FileLevelError, validate_rows
+from riskplatform.quality.rows import FileLevelError, _row_failures, validate_rows
 from riskplatform.schemas import positions_schema, rates_schema
 
 RUN = {
@@ -122,3 +122,13 @@ def test_rates_table_is_validated_the_same_way(cfg, generated):
     record = _only_record(result)
     assert (record["table"], record["row_number"], record["column"]) == ("rates", 2, "rate")
     assert len(result.valid) == len(rates) - 1
+
+
+def test_failure_without_a_row_stops_the_run():
+    """A failure pandera cannot pin to a row (index empty) is file-level: never quarantined."""
+    failures = pd.DataFrame(
+        {"schema_context": ["DataFrameSchema"], "column": [None], "check": ["column_count"],
+         "failure_case": ["3"], "index": [None]}
+    )  # fmt: skip
+    with pytest.raises(FileLevelError, match="column_count"):
+        _row_failures(failures, "positions", "positions/date=2026-08-03.parquet")

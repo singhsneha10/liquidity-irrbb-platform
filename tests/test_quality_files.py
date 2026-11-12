@@ -3,6 +3,7 @@
 import pandas as pd
 import pytest
 
+from riskplatform.config import GeneratorConfig
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.quality.files import (
     STOP_CHECKS,
@@ -14,6 +15,13 @@ from riskplatform.quality.rows import FileLevelError
 from riskplatform.validation.check_raw import run_checks, run_checks_on_tables
 
 BOND = "BANK_UK_GBP_govt_bonds_001"  # long-dated, so it never matures inside the window
+
+
+@pytest.fixture(scope="module")
+def cfg(cfg) -> GeneratorConfig:
+    """The same bank over 12 days (overrides conftest's 60-day cfg here): faults are planted
+    up to the 6th day, and every check runs on the whole table in each test."""
+    return GeneratorConfig.model_validate({**cfg.model_dump(), "n_days": 12})
 
 
 @pytest.fixture(scope="module")
@@ -85,10 +93,16 @@ def _fx_missing_a_rate(positions, rates, fx):
     return positions, rates, fx[~gone]
 
 
+def _curve_missing_for_a_currency(positions, rates, fx):
+    gone = (rates["currency"] == "EUR") & (rates["date"] == _nth_date(rates, 3))
+    return positions, rates[~gone], fx
+
+
 STOP_FAULTS = {
     "files_hold_their_own_date": _wrong_file_name,
     "day_count_matches_config": _missing_day,
     "positions_and_rates_share_dates": _rates_missing_a_day,
+    "curves_cover_every_currency": _curve_missing_for_a_currency,
     "fx_covers_every_date": _fx_missing_a_rate,
 }
 
@@ -104,19 +118,36 @@ def test_stop_check_failure_stops_the_run(cfg, tables, check):
     assert isinstance(stopped.value, FileLevelError)  # the run catches every stop in one place
 
 
+def _changed(column, value):
+    """A fault that changes one value of the long-dated bond on the sixth day."""
+
+    def fault(positions, rates, fx):
+        _change(positions, column, value, position_id=BOND, date=_nth_date(positions, 5))
+        return positions, rates, fx
+
+    return fault
+
+
+def _book_missing_on_a_day(positions, rates, fx):
+    book = (positions["entity"] == "BANK_EU") & (positions["currency"] == "EUR")
+    return positions[~(book & (positions["date"] == _nth_date(positions, 5)))], rates, fx
+
+
 WARNING_FAULTS = {
-    "static_attributes_unchanged": ("category", "covered_bonds"),
-    "day_counts_fall_by_calendar_days": ("residual_days", lambda days: days + 1),
-    "rate_changes_only_at_reset": ("interest_rate", lambda rate: rate + 0.01),
+    "every_book_every_day": _book_missing_on_a_day,
+    "static_attributes_unchanged": _changed("category", "covered_bonds"),
+    "day_counts_fall_by_calendar_days": _changed("residual_days", lambda days: days + 1),
+    "rate_changes_only_at_reset": _changed("interest_rate", lambda rate: rate + 0.01),
 }
+
+
+def test_every_warning_check_has_a_planted_fault():
+    assert set(WARNING_FAULTS) == set(WARNING_CHECKS)
 
 
 @pytest.mark.parametrize("check", list(WARNING_FAULTS))
 def test_warning_check_failure_is_reported_but_does_not_stop(cfg, tables, check):
-    positions, rates, fx = tables
-    column, value = WARNING_FAULTS[check]
-    _change(positions, column, value, position_id=BOND, date=_nth_date(positions, 5))
-    report = check_files(positions, rates, fx, cfg)
+    report = check_files(*WARNING_FAULTS[check](*tables), cfg)
     failed = [r.name for r in report.warnings if not r.passed]
     assert failed == [check]
     assert all(r.passed for r in report.stops)

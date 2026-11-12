@@ -71,8 +71,8 @@ receiver calculate totals with the same function.
 
 | Group | Checks | Effect |
 |---|---|---|
-| STOP | files hold only their own date; expected number of days; positions and rates cover the same dates; an FX rate for every currency on every date (`fx_covers_every_date`) | The run stops |
-| WARNING | attributes never change; countdowns fall by calendar days; rate changes only at a reset | Listed in the breaks report |
+| STOP | files hold only their own date; expected number of days; positions and rates cover the same dates; a curve for every currency held on every date (`curves_cover_every_currency`); an FX rate for every currency on every date (`fx_covers_every_date`) | The run stops |
+| WARNING | every entity/currency book present on every day (`every_book_every_day`); attributes never change; countdowns fall by calendar days; rate changes only at a reset | Listed in the breaks report |
 | Generator only | every position every day; balance sheet balances on day one; curve shape and parallel moves | Not run here; they verify the synthetic generator (`riskplatform.validation.check_raw`) |
 
 "Every position every day" is deliberately not a quality rule. It would turn every quarantined

@@ -7,6 +7,9 @@ output_file: data/external/curves.parquet
 provenance_file: data/external/curves_provenance.json
 user_agent: riskplatform-market-rates/0.1
 timeout_seconds: 300
+# Fetched yields outside these bounds (decimals) are refused before saving. Must equal
+# rate_bounds in config/generator.yaml (a test checks); the reasons for the values are there.
+rate_bounds: {low: -0.05, high: 0.25}
 
 # USD: US Treasury constant-maturity yields (par yields), from FRED.
 fred:

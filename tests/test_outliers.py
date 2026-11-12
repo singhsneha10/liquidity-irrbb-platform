@@ -109,3 +109,11 @@ def test_config_rejects_impossible_thresholds(thresholds, field, value):
     raw[field] = value
     with pytest.raises(ValidationError):
         OutlierThresholds.model_validate(raw)
+
+
+def test_day_without_curves_is_skipped_not_a_crash(tables, thresholds):
+    """A day with no curve stops the quality run elsewhere; the outlier check must not fail."""
+    positions, rates = tables
+    day = _day(rates, 1)
+    found = find_outliers(positions, rates[rates["date"] != day], thresholds)
+    assert not (found["check"].eq("rate_gap_to_curve") & found["date"].eq(day)).any()
