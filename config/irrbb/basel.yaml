@@ -1,0 +1,81 @@
+# Basel IRRBB standardised framework (BCBS Basel Framework, chapter SRP31; SRP98 guidance).
+# Source: https://www.bis.org/basel_framework/chapter/SRP/31.htm (in force 1 Jan 2026, published
+# 16 Jul 2024). Values verified against that text on 2026-11-12; each carries its reference.
+# Where the text leaves a choice open, or our data lacks an attribute, `assumption` says so.
+# Validated by riskplatform.config.IrrbbRules.
+
+regime: basel
+name: Basel (BCBS SRP31)
+
+shocks:
+  scenarios: [parallel_up, parallel_down, steepener, flattener, short_up, short_down]
+  scenarios_ref: "SRP31.90"
+  sizes_ref: "SRP31.90 Table 2"
+  sizes_bp:  # absolute shocks per currency, basis points
+    GBP: {parallel: 275, short: 425, long: 250}
+    EUR: {parallel: 225, short: 350, long: 200}
+    USD: {parallel: 200, short: 300, long: 225}
+  # Short shock fades with tenor t as exp(-t/x); long shock grows as 1 - exp(-t/x).
+  decay_years: {value: 4, ref: "SRP31.91(2)"}
+  steepener: {short: -0.65, long: 0.90, ref: "SRP31.92(2)"}
+  flattener: {short: 0.80, long: -0.60, ref: "SRP31.92(3)"}
+  floor:
+    applied: false
+    ref: "SRP31.93, SRP98.63"
+    assumption: "a post-shock floor is a national discretion (at most 0%); none is applied"
+
+aggregation:  # across currencies, per scenario
+  gains_weight: 0.0  # only losses are added up
+  ref: "SRP31.129(5)"
+
+outlier_threshold:
+  {value: 0.15, ref: "SRP31.82, SRP31.83",
+   assumption: "Tier 1 capital is taken as the group's implied equity"}
+
+# 19 repricing time buckets: up_to_years is the bucket's upper edge (the last is open-ended);
+# midpoint_years is where its cash flows are placed for discounting.
+buckets_ref: "SRP31.96 Table 3"
+buckets:
+  - {label: overnight, up_to_years: 0.0028, midpoint_years: 0.0028}
+  - {label: O/N-1M, up_to_years: 0.0833, midpoint_years: 0.0417}
+  - {label: 1M-3M, up_to_years: 0.25, midpoint_years: 0.1667}
+  - {label: 3M-6M, up_to_years: 0.5, midpoint_years: 0.375}
+  - {label: 6M-9M, up_to_years: 0.75, midpoint_years: 0.625}
+  - {label: 9M-1Y, up_to_years: 1.0, midpoint_years: 0.875}
+  - {label: 1Y-1.5Y, up_to_years: 1.5, midpoint_years: 1.25}
+  - {label: 1.5Y-2Y, up_to_years: 2.0, midpoint_years: 1.75}
+  - {label: 2Y-3Y, up_to_years: 3.0, midpoint_years: 2.5}
+  - {label: 3Y-4Y, up_to_years: 4.0, midpoint_years: 3.5}
+  - {label: 4Y-5Y, up_to_years: 5.0, midpoint_years: 4.5}
+  - {label: 5Y-6Y, up_to_years: 6.0, midpoint_years: 5.5}
+  - {label: 6Y-7Y, up_to_years: 7.0, midpoint_years: 6.5}
+  - {label: 7Y-8Y, up_to_years: 8.0, midpoint_years: 7.5}
+  - {label: 8Y-9Y, up_to_years: 9.0, midpoint_years: 8.5}
+  - {label: 9Y-10Y, up_to_years: 10.0, midpoint_years: 9.5}
+  - {label: 10Y-15Y, up_to_years: 15.0, midpoint_years: 12.5}
+  - {label: 15Y-20Y, up_to_years: 20.0, midpoint_years: 17.5}
+  - {label: over 20Y, midpoint_years: 25.0}
+
+# Non-maturity deposits: a core share is assumed to stay and reprice at core_years; the rest
+# (non-core) reprices overnight (SRP31.111). Our data has no deposit history, so core_share and
+# core_years are judgement, kept inside the caps; Phase 9 (model validation) challenges them.
+nmd:
+  caps_ref: "SRP31.112 Table 4"
+  caps:
+    retail_transactional: {core_max: 0.90, years_max: 5.0}
+    retail_non_transactional: {core_max: 0.70, years_max: 4.5}
+    wholesale: {core_max: 0.50, years_max: 4.0}
+  max_average_years: null  # Basel sets no extra per-currency average
+  categories:
+    retail_stable_deposits:
+      {type: retail_transactional, core_share: 0.70, core_years: 4.0,
+       assumption: "stable retail deposits treated as transactional; core share and maturity are judgement"}
+    retail_less_stable_deposits:
+      {type: retail_non_transactional, core_share: 0.50, core_years: 3.0,
+       assumption: "less stable retail deposits treated as non-transactional; core share and maturity are judgement"}
+
+nii:
+  scenarios: [parallel_up, parallel_down]
+  horizon_months: 12
+  ref: "SRP31.90, SRP98.25, SRP98.52"
+  assumption: "SRP31.90 prescribes two NII scenarios without naming them: parallel up and down are used; 12-month horizon (Basel: typically 1-3 years) with a constant balance sheet"

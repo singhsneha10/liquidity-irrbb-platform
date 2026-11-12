@@ -1,6 +1,7 @@
 """Typed, validated configuration for the synthetic data generator."""
 
 import itertools
+import math
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -327,6 +328,150 @@ class LadderConfig(_Strict):
 def load_ladder_config(path: str | Path) -> LadderConfig:
     """Read a YAML file and return a validated LadderConfig."""
     return LadderConfig.model_validate(_read_yaml(path))
+
+
+ShockScenario = Literal[
+    "parallel_up", "parallel_down", "steepener", "flattener", "short_up", "short_down"
+]
+
+
+class ShockSizes(_Strict):
+    """Absolute shock sizes for one currency, in basis points."""
+
+    parallel: float = Field(gt=0)
+    short: float = Field(gt=0)
+    long: float = Field(gt=0)
+
+
+class Twist(_Strict):
+    """Weights on the short and long shocks for the steepener or flattener."""
+
+    short: float
+    long: float
+    ref: str
+
+
+class PostShockFloor(_Strict):
+    """Optional floor on shocked rates: start_bp at tenor 0, rising linearly to 0 at zero_at_years."""
+
+    applied: bool
+    start_bp: float | None = Field(default=None, le=0)
+    zero_at_years: float | None = Field(default=None, gt=0)
+    ref: str
+    assumption: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "PostShockFloor":
+        given = self.start_bp is not None and self.zero_at_years is not None
+        if self.applied != given or (self.start_bp is None) != (self.zero_at_years is None):
+            raise ValueError(
+                "an applied floor needs start_bp and zero_at_years; a floor not applied has neither"
+            )
+        return self
+
+
+class CurveShocks(_Strict):
+    scenarios: list[ShockScenario] = Field(min_length=1)
+    scenarios_ref: str
+    sizes_ref: str
+    sizes_bp: dict[str, ShockSizes]
+    decay_years: Referenced
+    steepener: Twist
+    flattener: Twist
+    floor: PostShockFloor
+
+
+class GainsWeight(_Strict):
+    gains_weight: float = Field(ge=0, le=1)
+    ref: str
+
+
+class OutlierThreshold(_Strict):
+    value: float = Field(gt=0, lt=1)
+    ref: str
+    assumption: str | None = None
+
+
+class RepricingBucket(_Strict):
+    label: str
+    up_to_years: float | None = Field(default=None, gt=0)  # upper edge; None: open-ended
+    midpoint_years: float = Field(gt=0)
+
+
+class NmdCap(_Strict):
+    core_max: float = Field(gt=0, le=1)
+    years_max: float = Field(gt=0)
+
+
+class NmdTreatment(_Strict):
+    type: str
+    core_share: float = Field(ge=0, le=1)
+    core_years: float = Field(gt=0)
+    assumption: str | None = None
+
+
+class NmdRules(_Strict):
+    caps_ref: str
+    caps: dict[str, NmdCap]
+    max_average_years: float | None = Field(default=None, gt=0)
+    categories: dict[str, NmdTreatment]
+
+    @model_validator(mode="after")
+    def _check(self) -> "NmdRules":
+        for name, treatment in self.categories.items():
+            cap = self.caps.get(treatment.type)
+            if cap is None:
+                raise ValueError(f"nmd {name}: unknown type {treatment.type!r}")
+            if treatment.core_share > cap.core_max or treatment.core_years > cap.years_max:
+                raise ValueError(f"nmd {name}: core share or years exceed the {treatment.type} cap")
+            limit = self.max_average_years
+            if limit is not None and treatment.core_years > limit:
+                raise ValueError(f"nmd {name}: core_years above max_average_years {limit}")
+        return self
+
+
+class NiiRules(_Strict):
+    scenarios: list[ShockScenario] = Field(min_length=1)
+    horizon_months: int = Field(gt=0)
+    ref: str
+    assumption: str | None = None
+
+
+class IrrbbRules(_Strict):
+    """One rulebook's IRRBB parameters (config/irrbb/<regime>.yaml)."""
+
+    regime: Regime
+    name: str
+    shocks: CurveShocks
+    aggregation: GainsWeight
+    outlier_threshold: OutlierThreshold
+    buckets_ref: str
+    buckets: list[RepricingBucket] = Field(min_length=2)
+    nmd: NmdRules
+    nii: NiiRules
+
+    @model_validator(mode="after")
+    def _check(self) -> "IrrbbRules":
+        edges = [bucket.up_to_years for bucket in self.buckets]
+        if edges[-1] is not None or None in edges[:-1]:
+            raise ValueError("only the last repricing bucket may (and must) be open-ended")
+        if any(later <= earlier for earlier, later in itertools.pairwise(edges[:-1])):
+            raise ValueError("repricing bucket edges must rise strictly")
+        lower = 0.0
+        for bucket in self.buckets:
+            upper = bucket.up_to_years if bucket.up_to_years is not None else math.inf
+            if not lower <= bucket.midpoint_years <= upper:
+                raise ValueError(f"bucket {bucket.label}: midpoint outside the bucket")
+            lower = upper
+        unknown = set(self.nii.scenarios) - set(self.shocks.scenarios)
+        if unknown:
+            raise ValueError(f"nii scenarios not among the shock scenarios: {sorted(unknown)}")
+        return self
+
+
+def load_irrbb_rules(path: str | Path) -> IrrbbRules:
+    """Read a YAML file and return validated IrrbbRules."""
+    return IrrbbRules.model_validate(_read_yaml(path))
 
 
 class SeriesSource(_Strict):
