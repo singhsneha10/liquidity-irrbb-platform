@@ -161,6 +161,25 @@ def load_generator_config(path: str | Path) -> GeneratorConfig:
     return GeneratorConfig.model_validate(_read_generator_yaml(Path(path)))
 
 
+class OutlierThresholds(_Strict):
+    """Review triggers for outlier warnings (see config/quality.yaml); not regulatory limits."""
+
+    balance_jump: float = Field(gt=0)
+    rate_gap_to_curve: float = Field(gt=0)
+    concentration_share: float = Field(gt=0, le=1)
+    concentration_exclude_categories: list[str]
+    curve_move: float = Field(gt=0)
+
+
+class QualityConfig(_Strict):
+    outliers: OutlierThresholds
+
+
+def load_quality_config(path: str | Path) -> QualityConfig:
+    """Read a YAML file and return a validated QualityConfig."""
+    return QualityConfig.model_validate(_read_yaml(path))
+
+
 class SeriesSource(_Strict):
     """A source that publishes one series per tenor (FRED, ECB): series code -> tenor in years."""
 

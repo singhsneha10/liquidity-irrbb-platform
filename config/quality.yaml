@@ -1,0 +1,21 @@
+# Data quality settings (Phase 3), validated by riskplatform.config.QualityConfig.
+#
+# Outlier thresholds are review triggers for an analyst, NOT regulatory limits. A value beyond a
+# threshold is valid but unusual: it is listed as a warning in the breaks report and never
+# quarantined. Rates are decimals, as everywhere else (0.005 = 0.5% = 50 basis points).
+
+outliers:
+  # A position's balance moving more than this fraction from its previous business day.
+  balance_jump: 0.25  # 25%
+
+  # A position's rate further than this from its currency's curve at its remaining maturity.
+  # A rough reasonableness check: rates are really fixed at their reference tenor and fixing date.
+  rate_gap_to_curve: 0.05  # 5 percentage points
+
+  # One position's share of its entity/currency/side total (on balance sheet only).
+  concentration_share: 0.25  # 25%
+  # Single account balances, not exposures to a borrower or funder, so not a concentration risk.
+  concentration_exclude_categories: [central_bank_reserves]
+
+  # Any curve point moving more than this in one business day.
+  curve_move: 0.005  # 50 basis points
