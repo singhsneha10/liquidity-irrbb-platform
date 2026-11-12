@@ -162,3 +162,87 @@ def test_command_line_entry_point(cfg, tmp_path):
     main(["--config", str(CONFIG_PATH), "--out", str(tmp_path)])
     assert (tmp_path / "rates.parquet").exists()
     assert len(list((tmp_path / "positions").glob("date=*.parquet"))) == cfg.n_days
+
+
+# --- Real-rates mode (curves read from a saved file) ------------------------------------------
+
+REAL_TENORS = [0.25, 1.0, 10.0]
+CURVE_DAYS = pd.bdate_range("2026-07-31", "2026-08-14")  # a Friday before start, then 2 weeks
+
+
+def _real_rate(currency_index: int, day_index: int, tenor: float) -> float:
+    """Simple known curves: higher per currency, per tenor and per day, so each is traceable."""
+    return 0.02 + 0.01 * currency_index + 0.001 * tenor + 0.0001 * day_index
+
+
+def _write_curves(cfg, path, drop=()):
+    """Save curves for every currency and CURVE_DAYS, leaving out (currency, date) in drop."""
+    rows = [
+        {
+            "date": day,
+            "currency": currency,
+            "tenor_years": tenor,
+            "rate": _real_rate(c, d, tenor),
+            "source": "boe",
+        }
+        for c, currency in enumerate(cfg.currencies)
+        for d, day in enumerate(CURVE_DAYS)
+        for tenor in REAL_TENORS
+        if (currency, day) not in {(ccy, pd.Timestamp(when)) for ccy, when in drop}
+    ]
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    return path
+
+
+def _real_cfg(cfg, curves_file, n_days=10):
+    raw = cfg.model_dump()
+    raw["n_days"] = n_days
+    raw["rates"]["source"] = "real"
+    raw["rates"]["real"] = {"curves_file": curves_file, "max_fill_days": 4}
+    return GeneratorConfig.model_validate(raw)
+
+
+def _rate_on(rates, currency, day, tenor):
+    match = (
+        (rates["currency"] == currency)
+        & (rates["date"] == pd.Timestamp(day))
+        & (rates["tenor_years"] == tenor)
+    )
+    return rates.loc[match, "rate"].item()
+
+
+def test_real_curves_are_laid_on_the_tenor_grid(cfg, tmp_path):
+    real = _real_cfg(cfg, _write_curves(cfg, tmp_path / "curves.parquet"))
+    _, rates = generate(real)
+    day = "2026-08-05"
+    d = list(CURVE_DAYS).index(pd.Timestamp(day))
+    for c, currency in enumerate(cfg.currencies):
+        assert _rate_on(rates, currency, day, 0.5) == pytest.approx(_real_rate(c, d, 0.5))
+        assert _rate_on(rates, currency, day, 0.0833) == pytest.approx(_real_rate(c, d, 0.25))
+        assert _rate_on(rates, currency, day, 30.0) == pytest.approx(_real_rate(c, d, 10.0))
+
+
+def test_real_curve_missing_on_a_holiday_uses_the_previous_day(cfg, tmp_path):
+    path = _write_curves(cfg, tmp_path / "curves.parquet", drop=[("GBP", "2026-08-10")])
+    _, rates = generate(_real_cfg(cfg, path))
+    assert _rate_on(rates, "GBP", "2026-08-10", 1.0) == _rate_on(rates, "GBP", "2026-08-07", 1.0)
+    assert _rate_on(rates, "USD", "2026-08-10", 1.0) != _rate_on(rates, "USD", "2026-08-07", 1.0)
+
+
+def test_real_curve_gap_longer_than_allowed_is_an_error(cfg, tmp_path):
+    week = [("USD", day) for day in pd.bdate_range("2026-08-04", "2026-08-10")]
+    path = _write_curves(cfg, tmp_path / "curves.parquet", drop=week)
+    with pytest.raises(ValueError, match="USD.*2026-08-10"):
+        generate(_real_cfg(cfg, path))
+
+
+def test_real_curves_missing_a_currency_is_an_error(cfg, tmp_path):
+    no_eur = [("EUR", day) for day in CURVE_DAYS]
+    path = _write_curves(cfg, tmp_path / "curves.parquet", drop=no_eur)
+    with pytest.raises(ValueError, match="EUR"):
+        generate(_real_cfg(cfg, path))
+
+
+def test_real_mode_without_saved_file_explains_how_to_get_it(cfg, tmp_path):
+    with pytest.raises(FileNotFoundError, match="market_rates"):
+        generate(_real_cfg(cfg, tmp_path / "missing.parquet"))

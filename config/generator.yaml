@@ -19,6 +19,7 @@ daily_balance_drift: 0.0002
 daily_balance_vol: 0.004
 
 rates:
+  source: synthetic  # offline default; config/generator_real.yaml switches to saved real curves
   tenors_years: [0.0833, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0]
   curve_decay_years: 2.0
   daily_vol: 0.0003

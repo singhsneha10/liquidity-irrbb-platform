@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from riskplatform.schemas import positions_schema, rates_schema
+from riskplatform.schemas import market_curves_schema, positions_schema, rates_schema
 
 DICTIONARY_PATH = Path(__file__).resolve().parents[1] / "docs" / "data_dictionary.md"
 
@@ -34,7 +34,11 @@ def _documented(section: str, table: str) -> list[str]:
 
 @pytest.mark.parametrize(
     ("section", "make_schema"),
-    [("1. Positions", positions_schema), ("2. Market rates", rates_schema)],
+    [
+        ("1. Positions", positions_schema),
+        ("2. Market rates", rates_schema),
+        ("3. Saved real curves", lambda cfg: market_curves_schema(cfg.currencies)),
+    ],
 )
 def test_dictionary_lists_exactly_the_schema_columns(cfg, section, make_schema):
     assert _documented(section, "Columns") == list(make_schema(cfg).columns)

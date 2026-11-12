@@ -6,8 +6,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from riskplatform.config import GeneratorConfig
 from riskplatform.ingestion.generate import generate, write_outputs
-from riskplatform.validation.check_raw import CHECKS, main, run_checks
+from riskplatform.validation.check_raw import CHECKS, SYNTHETIC_ONLY, main, run_checks
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "generator.yaml"
 
@@ -138,3 +139,38 @@ def test_command_line_exit_codes(raw_dir, capsys):
     _missing_row(raw_dir)
     assert main(args) == 1
     assert "FAIL  every_position_every_day" in capsys.readouterr().out
+
+
+# --- Real-rates mode: synthetic-only curve checks are skipped and reported -------------------
+
+
+def _real_mode(cfg) -> GeneratorConfig:
+    raw = cfg.model_dump()
+    raw["rates"]["source"] = "real"
+    raw["rates"]["real"] = {"curves_file": "unused.parquet", "max_fill_days": 4}
+    return GeneratorConfig.model_validate(raw)
+
+
+@pytest.mark.parametrize("check", sorted(set(FAULTS) - SYNTHETIC_ONLY))
+def test_real_mode_skips_only_synthetic_checks_and_still_catches_faults(cfg, raw_dir, check):
+    real = _real_mode(cfg)
+    clean = run_checks(raw_dir, real)
+    assert {r.name for r in clean if r.skipped} == SYNTHETIC_ONLY
+    assert all(r.passed for r in clean)
+    FAULTS[check](raw_dir)
+    assert not {r.name: r for r in run_checks(raw_dir, real)}[check].passed
+
+
+def test_command_line_reports_skipped_checks(cfg, raw_dir, tmp_path, capsys):
+    real_config = tmp_path / "real.yaml"
+    lines = [
+        f"base: {CONFIG_PATH.as_posix()}",
+        "rates:",
+        "  source: real",
+        "  real: {curves_file: unused.parquet, max_fill_days: 4}",
+    ]
+    real_config.write_text("\n".join(lines), encoding="utf-8")
+    assert main(["--config", str(real_config), "--raw", str(raw_dir)]) == 0
+    out = capsys.readouterr().out
+    assert "SKIP  curves_move_in_parallel" in out
+    assert f"{len(CHECKS) - 2} passed, 0 failed, 2 skipped" in out

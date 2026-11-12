@@ -150,6 +150,10 @@ CHECKS = {
     """,
 }
 
+# Checks of how the synthetic curves are built. Real curves twist and do not follow the
+# config's shape, so these are skipped (and reported as skipped) when rates.source is 'real'.
+SYNTHETIC_ONLY = {"curves_move_in_parallel", "curve_shape_matches_config"}
+
 # Named parameters each query uses (DuckDB rejects parameters a query does not use).
 _TOLERANCES = {"balance_tolerance": BALANCE_TOLERANCE, "rate_tolerance": RATE_TOLERANCE}
 
@@ -158,6 +162,7 @@ _TOLERANCES = {"balance_tolerance": BALANCE_TOLERANCE, "rate_tolerance": RATE_TO
 class CheckResult:
     name: str
     failures: int  # number of offending rows
+    skipped: bool = False
 
     @property
     def passed(self) -> bool:
@@ -199,6 +204,9 @@ def run_checks(raw_dir: str | Path, cfg: GeneratorConfig) -> list[CheckResult]:
     with duckdb.connect() as con:  # in-memory database, gone when the block ends
         _load(con, Path(raw_dir), cfg)
         for name, sql in CHECKS.items():
+            if name in SYNTHETIC_ONLY and cfg.rates.source != "synthetic":
+                results.append(CheckResult(name, failures=0, skipped=True))
+                continue
             params = {key: value for key, value in _TOLERANCES.items() if f"${key}" in sql}
             count_sql = f"SELECT count(*) FROM ({sql})"
             (failures,) = con.execute(count_sql, params).fetchone()
@@ -214,10 +222,14 @@ def main(argv: list[str] | None = None) -> int:
 
     results = run_checks(args.raw, load_generator_config(args.config))
     for result in results:
+        if result.skipped:
+            print(f"SKIP  {result.name}  (synthetic curves only)")
+            continue
         detail = "" if result.passed else f"  ({result.failures} offending rows)"
         print(f"{'PASS' if result.passed else 'FAIL'}  {result.name}{detail}")
+    skipped = sum(result.skipped for result in results)
     failed = sum(not result.passed for result in results)
-    print(f"{len(results) - failed} passed, {failed} failed")
+    print(f"{len(results) - failed - skipped} passed, {failed} failed, {skipped} skipped")
     return 1 if failed else 0
 
 

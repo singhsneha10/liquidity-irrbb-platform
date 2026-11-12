@@ -51,7 +51,19 @@ class CurveParams(_Strict):
     long_rate: float
 
 
+RatesSource = Literal["synthetic", "real"]
+
+
+class RealCurves(_Strict):
+    """Where real curves are read from (a file saved by the market_rates fetch, never live)."""
+
+    curves_file: Path
+    max_fill_days: int = Field(ge=0)  # calendar days a missing curve may be filled from before
+
+
 class RatesConfig(_Strict):
+    source: RatesSource
+    real: RealCurves | None = None
     tenors_years: list[float]
     curve_decay_years: float = Field(gt=0)
     daily_vol: float = Field(ge=0)
@@ -63,6 +75,8 @@ class RatesConfig(_Strict):
         increasing = all(later > earlier for earlier, later in itertools.pairwise(tenors))
         if not tenors or tenors[0] <= 0 or not increasing:
             raise ValueError("tenors_years must be non-empty, positive and strictly increasing")
+        if self.source == "real" and self.real is None:
+            raise ValueError("rates.source is 'real', so a rates.real section is required")
         return self
 
 
@@ -117,8 +131,80 @@ class GeneratorConfig(_Strict):
         return self
 
 
-def load_generator_config(path: str | Path) -> GeneratorConfig:
-    """Read a YAML file and return a validated GeneratorConfig."""
+def _read_yaml(path: str | Path) -> dict:
     with open(path, encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle)
-    return GeneratorConfig.model_validate(raw)
+        return yaml.safe_load(handle)
+
+
+def _merge(base: dict, override: dict) -> dict:
+    """Override's values replace base's; nested sections are merged key by key."""
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _read_generator_yaml(path: Path) -> dict:
+    """Read a generator YAML file; a 'base:' key names a file (relative to this one) to extend."""
+    raw = _read_yaml(path)
+    base_name = raw.pop("base", None)
+    if base_name is None:
+        return raw
+    return _merge(_read_generator_yaml(path.parent / base_name), raw)
+
+
+def load_generator_config(path: str | Path) -> GeneratorConfig:
+    """Read a YAML file (optionally extending a base file) and return a GeneratorConfig."""
+    return GeneratorConfig.model_validate(_read_generator_yaml(Path(path)))
+
+
+class SeriesSource(_Strict):
+    """A source that publishes one series per tenor (FRED, ECB): series code -> tenor in years."""
+
+    currency: str
+    url: str  # template with {series} and {start} placeholders
+    series: dict[str, float] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check_template(self) -> "SeriesSource":
+        if "{series}" not in self.url or "{start}" not in self.url:
+            raise ValueError(f"url must contain {{series}} and {{start}}: {self.url}")
+        return self
+
+
+class BoeSource(_Strict):
+    """The Bank of England yield curve archives (zip files of Excel workbooks)."""
+
+    currency: str
+    archive_urls: list[str] = Field(min_length=1)
+    workbook_name_contains: str
+    sheets: list[str] = Field(min_length=1)
+
+
+class MarketRatesConfig(_Strict):
+    start_date: date
+    output_file: Path
+    provenance_file: Path
+    user_agent: str
+    timeout_seconds: float = Field(gt=0)
+    fred: SeriesSource
+    ecb: SeriesSource
+    boe: BoeSource
+
+    @property
+    def currencies(self) -> list[str]:
+        return [self.fred.currency, self.ecb.currency, self.boe.currency]
+
+    @model_validator(mode="after")
+    def _check_currencies(self) -> "MarketRatesConfig":
+        if len(set(self.currencies)) != len(self.currencies):
+            raise ValueError(f"each source must cover a different currency: {self.currencies}")
+        return self
+
+
+def load_market_rates_config(path: str | Path) -> MarketRatesConfig:
+    """Read a YAML file and return a validated MarketRatesConfig."""
+    return MarketRatesConfig.model_validate(_read_yaml(path))

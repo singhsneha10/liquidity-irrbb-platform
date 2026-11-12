@@ -1,0 +1,32 @@
+# Public sources for real government yield curves (one per currency).
+# Fetch with:  python -m riskplatform.ingestion.market_rates
+# Sources publish rates in percent; they are stored as decimals (4.25 -> 0.0425).
+
+start_date: 2026-07-20  # a little before the generator's start_date, so early holidays can be filled
+output_file: data/external/curves.parquet
+provenance_file: data/external/curves_provenance.json
+user_agent: riskplatform-market-rates/0.1
+timeout_seconds: 300
+
+# USD: US Treasury constant-maturity yields (par yields), from FRED.
+fred:
+  currency: USD
+  url: "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}&cosd={start}"
+  series: {DGS1MO: 0.0833, DGS3MO: 0.25, DGS6MO: 0.5, DGS1: 1.0, DGS2: 2.0, DGS5: 5.0, DGS10: 10.0, DGS30: 30.0}
+
+# EUR: euro-area AAA government bond spot (zero-coupon) curve, from the ECB data portal.
+ecb:
+  currency: EUR
+  url: "https://data-api.ecb.europa.eu/service/data/YC/B.U2.EUR.4F.G_N_A.SV_C_YM.{series}?format=csvdata&startPeriod={start}"
+  series: {SR_3M: 0.25, SR_6M: 0.5, SR_1Y: 1.0, SR_2Y: 2.0, SR_5Y: 5.0, SR_10Y: 10.0, SR_30Y: 30.0}
+
+# GBP: UK nominal gilt spot (zero-coupon) curve, from the Bank of England yield curve archive.
+# The history archive holds multi-year workbooks; the latest archive holds the current month.
+boe:
+  currency: GBP
+  archive_urls:
+    - "https://www.bankofengland.co.uk/-/media/boe/files/statistics/yield-curves/glcnominalddata.zip"
+    - "https://www.bankofengland.co.uk/-/media/boe/files/statistics/yield-curves/latest-yield-curve-data.zip"
+  workbook_name_contains: "GLC Nominal daily data"
+  # Read in this order; where both give a tenor, the later sheet wins.
+  sheets: ["3. spot, short end", "4. spot curve"]

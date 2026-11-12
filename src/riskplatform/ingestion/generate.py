@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from riskplatform.config import GeneratorConfig, load_generator_config
-from riskplatform.schemas import positions_schema, rates_schema
+from riskplatform.schemas import market_curves_schema, positions_schema, rates_schema
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +191,47 @@ def build_curves(cfg: GeneratorConfig, n_days: int, rng: np.random.Generator) ->
     return base[None, :, :] + shifts[:, :, None]
 
 
+def load_real_curves(cfg: GeneratorConfig, dates: pd.DatetimeIndex) -> np.ndarray:
+    """Read saved real curves and lay them on the generator's dates and tenor grid.
+
+    Returns the same shape as build_curves: (n_days, n_currencies, n_tenors). Each source day's
+    curve is interpolated onto rates.tenors_years (straight lines between the source's points,
+    flat beyond its shortest and longest). A date with no curve (a holiday) uses the latest
+    earlier curve, if it is at most rates.real.max_fill_days calendar days old.
+    """
+    real = cfg.rates.real
+    path = Path(real.curves_file)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found. Save it first with: python -m riskplatform.ingestion.market_rates"
+        )
+    stored = pd.read_parquet(path)
+    stored = stored[stored["currency"].isin(cfg.currencies)]
+    stored = market_curves_schema(cfg.currencies).validate(stored)
+
+    grid = np.array(cfg.rates.tenors_years)
+    max_age = pd.Timedelta(days=real.max_fill_days)
+    curves = np.empty((len(dates), len(cfg.currencies), len(grid)))
+    for j, currency in enumerate(cfg.currencies):
+        by_day = stored[stored["currency"] == currency].sort_values("tenor_years").groupby("date")
+        if by_day.ngroups == 0:
+            raise ValueError(f"{path}: no curves for {currency}")
+        days = [(day, np.interp(grid, g["tenor_years"], g["rate"])) for day, g in by_day]
+        source_dates = pd.DatetimeIndex([day for day, _ in days])
+        on_grid = np.array([curve for _, curve in days])
+
+        latest = source_dates.searchsorted(dates, side="right") - 1  # -1: nothing on or before
+        age = dates - source_dates[latest.clip(0)]
+        missing = (latest < 0) | (age > max_age)
+        if missing.any():
+            listed = ", ".join(day.date().isoformat() for day in dates[missing])
+            raise ValueError(
+                f"{currency}: no curve within {real.max_fill_days} days before: {listed}"
+            )
+        curves[:, j, :] = on_grid[latest]
+    return curves
+
+
 def build_rates(cfg: GeneratorConfig, dates: pd.DatetimeIndex, curves: np.ndarray) -> pd.DataFrame:
     """Lay the curves out as a table (one row per date, currency and tenor)."""
     tenors = np.array(cfg.rates.tenors_years)
@@ -215,7 +256,10 @@ def generate(cfg: GeneratorConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
     book_rng, path_rng, rates_rng = (np.random.default_rng(s) for s in seeds)
 
     dates = pd.bdate_range(start=pd.Timestamp(cfg.start_date), periods=cfg.n_days)
-    curves = build_curves(cfg, len(dates), rates_rng)
+    if cfg.rates.source == "real":
+        curves = load_real_curves(cfg, dates)
+    else:
+        curves = build_curves(cfg, len(dates), rates_rng)
     book = build_book(cfg, book_rng)
     positions = build_positions(cfg, book, dates, curves, path_rng)
     positions = positions_schema(cfg).validate(positions)

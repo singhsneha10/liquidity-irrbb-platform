@@ -1,0 +1,12 @@
+# Real-rates mode: the same synthetic bank as generator.yaml, priced off real government curves.
+# The generator only READS the saved curves file; it never downloads. Save the file first with:
+#   python -m riskplatform.ingestion.market_rates
+# Then generate with:
+#   python -m riskplatform.ingestion.generate --config config/generator_real.yaml
+base: generator.yaml
+
+rates:
+  source: real
+  real:
+    curves_file: data/external/curves.parquet
+    max_fill_days: 4  # longest normal closure: Good Friday + Easter Monday -> Monday uses Thursday
