@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from riskplatform.config import GeneratorConfig, load_generator_config
+from riskplatform.controls import write_control_totals
 from riskplatform.schemas import market_curves_schema, positions_schema, rates_schema
 
 logger = logging.getLogger(__name__)
@@ -268,15 +269,24 @@ def generate(cfg: GeneratorConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def write_outputs(positions: pd.DataFrame, rates: pd.DataFrame, out_dir: Path) -> None:
-    """Write one positions file per date plus a rates file; safe to run repeatedly."""
+    """Write one positions file per date, a rates file and their control totals.
+
+    Safe to run repeatedly: stale position files are removed and the control file is replaced.
+    """
     out_dir = Path(out_dir)
     positions_dir = out_dir / "positions"
     positions_dir.mkdir(parents=True, exist_ok=True)
     for stale in positions_dir.glob("date=*.parquet"):
         stale.unlink()
+    sent = {}  # relative path -> (table, frame), for the control totals
     for day, frame in positions.groupby("date"):
-        frame.to_parquet(positions_dir / f"date={day:%Y-%m-%d}.parquet", index=False)
+        name = f"date={day:%Y-%m-%d}.parquet"
+        frame.to_parquet(positions_dir / name, index=False)
+        sent[f"positions/{name}"] = ("positions", frame)
     rates.to_parquet(out_dir / "rates.parquet", index=False)
+    sent["rates.parquet"] = ("rates", rates)
+    # Like a source system, send control totals with the files (see riskplatform.controls).
+    write_control_totals(out_dir, sent)
 
 
 def main(argv: list[str] | None = None) -> None:
