@@ -13,12 +13,13 @@ entities:
   - {name: BANK_US, home_currency: USD}
 
 floating_reprice_days: [1, 90]
-interest_rate_mean: 0.04
-interest_rate_sd: 0.01
+spread_sd: 0.0025          # per-position noise around each category's spread
+interest_rate_floor: 0.0   # no position earns or pays below zero (simplification)
 daily_balance_drift: 0.0002
 daily_balance_vol: 0.004
 
 rates:
+  source: synthetic  # offline default; config/generator_real.yaml switches to saved real curves
   tenors_years: [0.0833, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0]
   curve_decay_years: 2.0
   daily_vol: 0.0003
@@ -27,17 +28,24 @@ rates:
     USD: {short_rate: 0.0425, long_rate: 0.0475}
     EUR: {short_rate: 0.0200, long_rate: 0.0300}
 
+# Synthetic FX rates (real mode reads saved Bank of England rates instead). Each rate is the
+# reporting currency per one unit of the currency; it moves by a daily random percentage.
+fx:
+  reporting_currency: GBP  # group totals are reported in this currency
+  start_to_reporting: {USD: 0.74, EUR: 0.86}  # GBP per 1 USD / 1 EUR on day one
+  daily_vol: 0.004  # about 0.4% a day
+
 categories:
-  - {name: central_bank_reserves,    side: asset,             n_positions: 1,  mean_balance_mn: 1000, rate_type: floating, tenor_days: [1, 1]}
-  - {name: govt_bonds,               side: asset,             n_positions: 15, mean_balance_mn: 150,  rate_type: fixed,    tenor_days: [90, 3650]}
-  - {name: covered_bonds,            side: asset,             n_positions: 8,  mean_balance_mn: 50,   rate_type: fixed,    tenor_days: [180, 2500]}
-  - {name: corporate_bonds,          side: asset,             n_positions: 8,  mean_balance_mn: 40,   rate_type: fixed,    tenor_days: [180, 2500]}
-  - {name: corporate_loans,          side: asset,             n_positions: 40, mean_balance_mn: 200,  rate_type: floating, tenor_days: [30, 1800]}
-  - {name: retail_mortgages,         side: asset,             n_positions: 30, mean_balance_mn: 150,  rate_type: fixed,    tenor_days: [365, 9000]}
-  - {name: retail_stable_deposits,   side: liability,         n_positions: 25, mean_balance_mn: 300,  rate_type: floating, tenor_days: [1, 1]}
-  - {name: retail_less_stable_deposits, side: liability,      n_positions: 25, mean_balance_mn: 200,  rate_type: floating, tenor_days: [1, 1]}
-  - {name: wholesale_operational,    side: liability,         n_positions: 15, mean_balance_mn: 150,  rate_type: floating, tenor_days: [1, 30]}
-  - {name: wholesale_non_operational, side: liability,        n_positions: 15, mean_balance_mn: 180,  rate_type: floating, tenor_days: [1, 180]}
-  - {name: financial_institution_deposits, side: liability,   n_positions: 10, mean_balance_mn: 150,  rate_type: floating, tenor_days: [1, 90]}
-  - {name: term_debt,                side: liability,         n_positions: 10, mean_balance_mn: 250,  rate_type: fixed,    tenor_days: [365, 3650]}
-  - {name: undrawn_committed_lines,  side: off_balance_sheet, n_positions: 10, mean_balance_mn: 100,  rate_type: floating, tenor_days: [365, 1825]}
+  - {name: central_bank_reserves,    side: asset,             n_positions: 1,  mean_balance_mn: 1000, rate_type: floating, tenor_days: [1, 1], spread: 0.0}
+  - {name: govt_bonds,               side: asset,             n_positions: 15, mean_balance_mn: 150,  rate_type: fixed,    tenor_days: [90, 3650], spread: 0.0}
+  - {name: covered_bonds,            side: asset,             n_positions: 8,  mean_balance_mn: 50,   rate_type: fixed,    tenor_days: [180, 2500], spread: 0.004}
+  - {name: corporate_bonds,          side: asset,             n_positions: 8,  mean_balance_mn: 40,   rate_type: fixed,    tenor_days: [180, 2500], spread: 0.012}
+  - {name: corporate_loans,          side: asset,             n_positions: 40, mean_balance_mn: 200,  rate_type: floating, tenor_days: [30, 1800], spread: 0.020}
+  - {name: retail_mortgages,         side: asset,             n_positions: 30, mean_balance_mn: 150,  rate_type: fixed,    tenor_days: [365, 9000], spread: 0.010}
+  - {name: retail_stable_deposits,   side: liability,         n_positions: 25, mean_balance_mn: 300,  rate_type: floating, tenor_days: [1, 1], spread: -0.025}
+  - {name: retail_less_stable_deposits, side: liability,      n_positions: 25, mean_balance_mn: 200,  rate_type: floating, tenor_days: [1, 1], spread: -0.015}
+  - {name: wholesale_operational,    side: liability,         n_positions: 15, mean_balance_mn: 150,  rate_type: floating, tenor_days: [1, 30], spread: -0.010}
+  - {name: wholesale_non_operational, side: liability,        n_positions: 15, mean_balance_mn: 180,  rate_type: floating, tenor_days: [1, 180], spread: -0.003}
+  - {name: financial_institution_deposits, side: liability,   n_positions: 10, mean_balance_mn: 150,  rate_type: floating, tenor_days: [1, 90], spread: -0.001}
+  - {name: term_debt,                side: liability,         n_positions: 10, mean_balance_mn: 250,  rate_type: fixed,    tenor_days: [365, 3650], spread: 0.010}
+  - {name: undrawn_committed_lines,  side: off_balance_sheet, n_positions: 10, mean_balance_mn: 100,  rate_type: floating, tenor_days: [365, 1825], spread: 0.020}

@@ -6,13 +6,21 @@ Run it with:  python -m riskplatform.ingestion.generate
 
 import argparse
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from riskplatform.config import GeneratorConfig, load_generator_config
-from riskplatform.schemas import positions_schema, rates_schema
+from riskplatform.controls import write_control_totals
+from riskplatform.schemas import (
+    fx_schema,
+    market_curves_schema,
+    market_fx_schema,
+    positions_schema,
+    rates_schema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +83,7 @@ def build_book(cfg: GeneratorConfig, rng: np.random.Generator) -> pd.DataFrame:
                             "category": category.name,
                             "side": category.side,
                             "rate_type": category.rate_type,
-                            "interest_rate": rng.normal(
-                                cfg.interest_rate_mean, cfg.interest_rate_sd, n
-                            ),
+                            "spread": rng.normal(category.spread, cfg.spread_sd, n),
                             "start_balance_mn": rng.lognormal(
                                 np.log(category.mean_balance_mn * weight), cfg.balance_log_sigma, n
                             ),
@@ -91,12 +97,40 @@ def build_book(cfg: GeneratorConfig, rng: np.random.Generator) -> pd.DataFrame:
     return _balance_sheet(cfg, pd.concat(frames, ignore_index=True))
 
 
+def _curve_rate(
+    cfg: GeneratorConfig,
+    curves: np.ndarray,
+    day_index: np.ndarray,
+    currency_index: np.ndarray,
+    tenor_years: np.ndarray,
+) -> np.ndarray:
+    """Read curve rates by straight-line interpolation between tenors (flat beyond the ends).
+
+    curves has shape (n_days, n_currencies, n_tenors); the index arrays broadcast together.
+    """
+    tenors = np.array(cfg.rates.tenors_years)
+    t = np.clip(tenor_years, tenors[0], tenors[-1])
+    upper = np.searchsorted(tenors, t).clip(1, len(tenors) - 1)
+    lower = upper - 1
+    weight = (t - tenors[lower]) / (tenors[upper] - tenors[lower])
+    low_rate = curves[day_index, currency_index, lower]
+    high_rate = curves[day_index, currency_index, upper]
+    return low_rate + weight * (high_rate - low_rate)
+
+
 def build_positions(
-    cfg: GeneratorConfig, book: pd.DataFrame, dates: pd.DatetimeIndex, rng: np.random.Generator
+    cfg: GeneratorConfig,
+    book: pd.DataFrame,
+    dates: pd.DatetimeIndex,
+    curves: np.ndarray,
+    rng: np.random.Generator,
 ) -> pd.DataFrame:
     """Turn the static book into a daily positions table (one row per position per date)."""
     n_days, n_positions = len(dates), len(book)
-    day = np.arange(n_days)[:, None]  # column vector (n_days, 1); broadcasts against positions
+    # Calendar days since the first date, as a column vector (n_days, 1) that broadcasts against
+    # positions. Maturities count in calendar days (as LCR and NSFR do): a weekend is 3 days.
+    day_offsets = (dates - dates[0]).days.to_numpy()
+    elapsed = day_offsets[:, None]
 
     # Balances: each position starts at its start balance and takes a small random step each day.
     # The first day has no step, so day one matches the balanced starting book exactly.
@@ -104,85 +138,242 @@ def build_positions(
     steps[0] = 0.0
     balance = book["start_balance_mn"].to_numpy() * np.cumprod(1.0 + steps, axis=0)
 
-    # Days to maturity count down by one per day; a matured position is reissued at full tenor.
+    # Days to maturity count down by the calendar days elapsed; a matured position is reissued
+    # at full tenor.
     tenor = book["tenor_days"].to_numpy()
     age = book["age_days"].to_numpy()
-    residual = (tenor - 1 - age - day) % tenor + 1
+    residual = (tenor - 1 - age - elapsed) % tenor + 1
 
     # Floating-rate positions reset on a repeating cycle; fixed-rate ones only reprice at maturity.
     period = book["reprice_period_days"].to_numpy()
     phase = book["reprice_phase_days"].to_numpy()
-    days_to_reset = (period - 1 - phase - day) % period + 1
+    days_to_reset = (period - 1 - phase - elapsed) % period + 1
     is_fixed = (book["rate_type"] == "fixed").to_numpy()
     reprice = np.where(is_fixed, residual, np.minimum(days_to_reset, residual))
+
+    # Interest rates: a rate is fixed on the position's last fixing date, which is its last
+    # rollover or (floating only) its last reset, whichever is later. The rate is the curve rate
+    # for its currency at its reference tenor on that date, plus its spread, floored.
+    last_rollover = elapsed + residual - tenor
+    last_reset = elapsed + days_to_reset - period
+    fixing = np.where(is_fixed, last_rollover, np.maximum(last_rollover, last_reset))
+    # Business-day row of the fixing date: the latest date on or before it. Fixings before the
+    # first date use the first day's curve (simplification: there is no earlier curve history).
+    fixing_day = (np.searchsorted(day_offsets, fixing, side="right") - 1).clip(0)
+    # Reference tenor: fixed rates use the full tenor; floating rates the reset cycle, which is
+    # never longer than the position itself (a 1-day deposit resets daily).
+    reference_days = np.where(is_fixed, tenor, np.minimum(period, tenor))
+    currency_index = book["currency"].map({c: i for i, c in enumerate(cfg.currencies)})
+    curve_rate = _curve_rate(
+        cfg, curves, fixing_day, currency_index.to_numpy(), reference_days / 365.0
+    )
+    rate = np.maximum(curve_rate + book["spread"].to_numpy(), cfg.interest_rate_floor)
 
     # Stack the days: repeat the book once per day and attach that day's date and values.
     rows = np.tile(np.arange(n_positions), n_days)
     long = book.iloc[rows].reset_index(drop=True)
     long["date"] = dates.repeat(n_positions)
+    long["interest_rate"] = rate.ravel()
     long["balance_mn"] = balance.ravel()
     long["residual_days"] = residual.ravel()
     long["reprice_days"] = reprice.ravel()
     return long[POSITION_COLUMNS]
 
 
-def build_rates(
-    cfg: GeneratorConfig, dates: pd.DatetimeIndex, rng: np.random.Generator
-) -> pd.DataFrame:
-    """Create daily yield curves (one row per date, currency and tenor).
+def build_curves(cfg: GeneratorConfig, n_days: int, rng: np.random.Generator) -> np.ndarray:
+    """Create daily yield curves as an array of shape (n_days, n_currencies, n_tenors).
 
     Each currency's curve starts from a smooth short-to-long shape and then moves in parallel
     day by day. Real curves also twist and bend; that is a labelled simplification.
     """
     rates_cfg = cfg.rates
     tenors = np.array(rates_cfg.tenors_years)
-    n_days = len(dates)
 
     # One random walk of daily parallel shifts per currency (n_days x n_currencies).
     shifts = rng.normal(0.0, rates_cfg.daily_vol, (n_days, len(cfg.currencies))).cumsum(axis=0)
 
-    frames = []
+    approach = 1.0 - np.exp(-tenors / rates_cfg.curve_decay_years)  # 0 at short end -> 1 long
+    short = np.array([rates_cfg.curves[c].short_rate for c in cfg.currencies])
+    long = np.array([rates_cfg.curves[c].long_rate for c in cfg.currencies])
+    base = short[:, None] + (long - short)[:, None] * approach  # (n_currencies, n_tenors)
+    return base[None, :, :] + shifts[:, :, None]
+
+
+FETCH_HINT = "Save it first with: python -m riskplatform.ingestion.market_rates"
+
+
+def _latest_on_or_before(
+    source_dates: pd.DatetimeIndex, dates: pd.DatetimeIndex, max_days: int, label: str
+) -> np.ndarray:
+    """For each date, the position of the latest source date on or before it (holiday fill).
+
+    Raises ValueError, listing the dates, if a date has no source date within max_days.
+    """
+    latest = source_dates.searchsorted(dates, side="right") - 1  # -1: nothing on or before
+    age = dates - source_dates[latest.clip(0)]
+    missing = (latest < 0) | (age > pd.Timedelta(days=max_days))
+    if missing.any():
+        listed = ", ".join(day.date().isoformat() for day in dates[missing])
+        raise ValueError(f"{label}: nothing within {max_days} days before: {listed}")
+    return latest
+
+
+def load_real_curves(cfg: GeneratorConfig, dates: pd.DatetimeIndex) -> np.ndarray:
+    """Read saved real curves and lay them on the generator's dates and tenor grid.
+
+    Returns the same shape as build_curves: (n_days, n_currencies, n_tenors). Each source day's
+    curve is interpolated onto rates.tenors_years (straight lines between the source's points,
+    flat beyond its shortest and longest). A date with no curve (a holiday) uses the latest
+    earlier curve, if it is at most rates.real.max_fill_days calendar days old.
+    """
+    real = cfg.rates.real
+    path = Path(real.curves_file)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found. {FETCH_HINT}")
+    stored = pd.read_parquet(path)
+    stored = stored[stored["currency"].isin(cfg.currencies)]
+    stored = market_curves_schema(cfg.currencies).validate(stored)
+
+    grid = np.array(cfg.rates.tenors_years)
+    curves = np.empty((len(dates), len(cfg.currencies), len(grid)))
     for j, currency in enumerate(cfg.currencies):
-        curve = rates_cfg.curves[currency]
-        approach = 1.0 - np.exp(-tenors / rates_cfg.curve_decay_years)  # 0 at short end -> 1 long
-        base = curve.short_rate + (curve.long_rate - curve.short_rate) * approach
-        rate = base[None, :] + shifts[:, [j]]  # (n_days, n_tenors)
-        frames.append(
-            pd.DataFrame(
-                {
-                    "date": dates.repeat(len(tenors)),
-                    "currency": currency,
-                    "tenor_years": np.tile(tenors, n_days),
-                    "rate": rate.ravel(),
-                }
+        by_day = stored[stored["currency"] == currency].sort_values("tenor_years").groupby("date")
+        if by_day.ngroups == 0:
+            raise ValueError(f"{path}: no curves for {currency}")
+        days = [(day, np.interp(grid, g["tenor_years"], g["rate"])) for day, g in by_day]
+        source_dates = pd.DatetimeIndex([day for day, _ in days])
+        on_grid = np.array([curve for _, curve in days])
+
+        latest = _latest_on_or_before(source_dates, dates, real.max_fill_days, f"{currency} curve")
+        curves[:, j, :] = on_grid[latest]
+    return curves
+
+
+def load_real_fx(cfg: GeneratorConfig, dates: pd.DatetimeIndex) -> pd.DataFrame:
+    """Read saved real FX rates and lay them on the generator's dates (same shape as build_fx).
+
+    A date with no rate (a holiday) uses the latest earlier rate, at most
+    rates.real.max_fill_days calendar days old. The reporting currency is added at 1.
+    """
+    real = cfg.rates.real
+    path = Path(real.fx_file)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found. {FETCH_HINT}")
+    reporting = cfg.fx.reporting_currency
+    others = [c for c in cfg.currencies if c != reporting]
+    stored = pd.read_parquet(path)
+    stored = market_fx_schema(others).validate(stored[stored["currency"].isin(others)])
+
+    frames = []
+    for currency in cfg.currencies:
+        if currency == reporting:
+            rate = np.ones(len(dates))
+        else:
+            series = stored[stored["currency"] == currency].sort_values("date")
+            if series.empty:
+                raise ValueError(f"{path}: no FX rates for {currency}")
+            source_dates = pd.DatetimeIndex(series["date"])
+            latest = _latest_on_or_before(
+                source_dates, dates, real.max_fill_days, f"{currency} FX rate"
             )
-        )
+            rate = series["to_reporting"].to_numpy()[latest]
+        frames.append(pd.DataFrame({"date": dates, "currency": currency, "to_reporting": rate}))
     return pd.concat(frames, ignore_index=True)
 
 
-def generate(cfg: GeneratorConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build positions and rates from a config, checked against the data contracts."""
+def build_rates(cfg: GeneratorConfig, dates: pd.DatetimeIndex, curves: np.ndarray) -> pd.DataFrame:
+    """Lay the curves out as a table (one row per date, currency and tenor)."""
+    tenors = np.array(cfg.rates.tenors_years)
+    frames = [
+        pd.DataFrame(
+            {
+                "date": dates.repeat(len(tenors)),
+                "currency": currency,
+                "tenor_years": np.tile(tenors, len(dates)),
+                "rate": curves[:, j, :].ravel(),
+            }
+        )
+        for j, currency in enumerate(cfg.currencies)
+    ]
+    return pd.concat(frames, ignore_index=True)
+
+
+def build_fx(
+    cfg: GeneratorConfig, dates: pd.DatetimeIndex, rng: np.random.Generator
+) -> pd.DataFrame:
+    """Daily FX rates (one row per date and currency), reporting currency per unit of currency.
+
+    Each rate starts at its configured value and moves by a daily random percentage, so it can
+    never turn negative. Day one has no move. The reporting currency's rate is 1 on every date.
+    """
+    fx_cfg = cfg.fx
+    steps = rng.normal(0.0, fx_cfg.daily_vol, (len(dates), len(cfg.currencies)))
+    steps[0] = 0.0
+    paths = np.cumprod(1.0 + steps, axis=0)
+    frames = []
+    for j, currency in enumerate(cfg.currencies):
+        if currency == fx_cfg.reporting_currency:
+            rate = np.ones(len(dates))
+        else:
+            rate = fx_cfg.start_to_reporting[currency] * paths[:, j]
+        frames.append(pd.DataFrame({"date": dates, "currency": currency, "to_reporting": rate}))
+    return pd.concat(frames, ignore_index=True)
+
+
+@dataclass(frozen=True)
+class RawData:
+    """Everything the generator produces: the raw layer's three tables."""
+
+    positions: pd.DataFrame
+    rates: pd.DataFrame
+    fx: pd.DataFrame
+
+
+def generate(cfg: GeneratorConfig) -> RawData:
+    """Build positions, rates and FX from a config, checked against the data contracts."""
     # Independent random streams, so changing one part never shifts the others' numbers.
-    seeds = np.random.SeedSequence(cfg.seed).spawn(3)
-    book_rng, path_rng, rates_rng = (np.random.default_rng(s) for s in seeds)
+    # spawn(4)'s first three streams are the same as spawn(3)'s, so adding FX left the
+    # existing positions and rates unchanged.
+    seeds = np.random.SeedSequence(cfg.seed).spawn(4)
+    book_rng, path_rng, rates_rng, fx_rng = (np.random.default_rng(s) for s in seeds)
 
     dates = pd.bdate_range(start=pd.Timestamp(cfg.start_date), periods=cfg.n_days)
+    if cfg.rates.source == "real":
+        curves = load_real_curves(cfg, dates)
+    else:
+        curves = build_curves(cfg, len(dates), rates_rng)
     book = build_book(cfg, book_rng)
-    positions = positions_schema(cfg).validate(build_positions(cfg, book, dates, path_rng))
-    rates = rates_schema(cfg).validate(build_rates(cfg, dates, rates_rng))
-    return positions, rates
+    positions = build_positions(cfg, book, dates, curves, path_rng)
+    positions = positions_schema(cfg).validate(positions)
+    rates = rates_schema(cfg).validate(build_rates(cfg, dates, curves))
+    if cfg.rates.source == "real":
+        fx = load_real_fx(cfg, dates)
+    else:
+        fx = build_fx(cfg, dates, fx_rng)
+    fx = fx_schema(cfg).validate(fx)
+    return RawData(positions=positions, rates=rates, fx=fx)
 
 
-def write_outputs(positions: pd.DataFrame, rates: pd.DataFrame, out_dir: Path) -> None:
-    """Write one positions file per date plus a rates file; safe to run repeatedly."""
+def write_outputs(raw: RawData, out_dir: Path) -> None:
+    """Write one positions file per date, a rates file, an FX file and their control totals.
+
+    Safe to run repeatedly: stale position files are removed and the control file is replaced.
+    """
     out_dir = Path(out_dir)
     positions_dir = out_dir / "positions"
     positions_dir.mkdir(parents=True, exist_ok=True)
     for stale in positions_dir.glob("date=*.parquet"):
         stale.unlink()
-    for day, frame in positions.groupby("date"):
-        frame.to_parquet(positions_dir / f"date={day:%Y-%m-%d}.parquet", index=False)
-    rates.to_parquet(out_dir / "rates.parquet", index=False)
+    sent = {}  # relative path -> (table, frame), for the control totals
+    for day, frame in raw.positions.groupby("date"):
+        name = f"date={day:%Y-%m-%d}.parquet"
+        frame.to_parquet(positions_dir / name, index=False)
+        sent[f"positions/{name}"] = ("positions", frame)
+    for table, frame in (("rates", raw.rates), ("fx", raw.fx)):
+        frame.to_parquet(out_dir / f"{table}.parquet", index=False)
+        sent[f"{table}.parquet"] = (table, frame)
+    # Like a source system, send control totals with the files (see riskplatform.controls).
+    write_control_totals(out_dir, sent)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -193,13 +384,14 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_generator_config(args.config)
-    positions, rates = generate(cfg)
-    write_outputs(positions, rates, args.out)
+    raw = generate(cfg)
+    write_outputs(raw, args.out)
     logger.info(
-        "Wrote %d position rows over %d days and %d rate rows to %s",
-        len(positions),
+        "Wrote %d position rows over %d days, %d rate rows and %d FX rows to %s",
+        len(raw.positions),
         cfg.n_days,
-        len(rates),
+        len(raw.rates),
+        len(raw.fx),
         args.out,
     )
 
