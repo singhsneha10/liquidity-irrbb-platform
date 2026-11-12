@@ -1,9 +1,8 @@
 """The hand-worked IRRBB example in docs/irrbb_worked_example.md: the code must reproduce it.
 
 Expected values were worked out before any IRRBB code existed and rechecked with plain
-arithmetic (which also reproduces SRP31.92). While a calculation is not built yet, its tests
-are strict xfail: they must fail, and pytest errors as soon as they pass, so the marker has to
-be removed and the answers are enforced from then on.
+arithmetic (which also reproduces SRP31.92). Each test was strict xfail until its calculation
+was built (steps 5.3-5.6); every one reproduced these answers and is now enforced.
 """
 
 from pathlib import Path
@@ -44,7 +43,6 @@ EXPECTED_NII = {
     "basel": {"parallel_up": -6.581520, "parallel_down": 6.581520},
     "pra": {"parallel_up": -6.581520, "parallel_down": 4.786225},
 }
-NOT_BUILT = pytest.mark.xfail(strict=True, reason="delta NII is built in step 5.6")
 
 
 def test_shapes_reproduce_the_basel_example_srp31_92():
@@ -77,7 +75,6 @@ def test_worst_loss_and_outlier_test(regime):
     assert loss > RULES[regime].outlier_threshold.value * 200  # equity 200: an outlier
 
 
-@NOT_BUILT
 @pytest.mark.parametrize("regime", ["basel", "pra"])
 def test_delta_nii_matches_the_hand_calculation(regime):
     from riskplatform.irrbb.nii import delta_nii
