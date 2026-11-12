@@ -11,7 +11,7 @@ totals:
 
 | Table | Files | Grain (one row per...) | Rows with default config |
 |---|---|---|---|
-| Positions | `data/raw/positions/date=YYYY-MM-DD.parquet` (one file per business day) | position per date | 54,000 (900 positions x 60 days) |
+| Positions | `data/raw/positions/date=YYYY-MM-DD.parquet` (one file per business day) | position per date | 55,440 (924 positions x 60 days) |
 | Market rates | `data/raw/rates.parquet` | date, currency and tenor | 1,440 (60 days x 3 currencies x 8 tenors) |
 | FX rates | `data/raw/fx.parquet` | date and currency | 180 (60 days x 3 currencies) |
 | Control totals | `data/raw/control_totals.json` | file | rows (and balances for positions) per file, for reconciliation |
@@ -66,15 +66,26 @@ One row per banking-book position per business day.
 | `financial_institution_deposits` | liability | floating | 1 - 90 | -0.10% |
 | `term_debt` | liability | fixed | 365 - 3,650 | +1.00% |
 | `undrawn_committed_lines` | off_balance_sheet | floating | 365 - 1,825 | +2.00% (rate if drawn) |
+| `interest_rate_swaps` | off_balance_sheet | fixed | 1,825 - 7,300 | 0.00% (at market; balance = notional) |
 
 The source of truth is `config/generator.yaml`. This table copies it for reading convenience.
 
 ### How the data is generated (summary)
 
 - **Book:** every entity x currency x category combination has at least one position. The
-  entity's home currency gets the full position count from config. The other currencies get
-  `foreign_currency_weight` (20%) of it, with at least one position. That gives 300 positions
-  per entity and 900 in total.
+  entity's home currency gets the full position count and mean balance from config. The other
+  currencies get `foreign_currency_weight` (20%) of it, with at least one position. A category
+  may set its own foreign weight: central bank reserves 5% and government bonds 8%, because
+  foreign-currency books hold relatively little central bank money and government debt. That
+  gives 220 positions per entity at home and 44 in each foreign currency: 924 in total.
+- **Hedges:** `interest_rate_swaps` are pay-fixed, receive-floating swaps of 5-20 years, at
+  market (the fixed rate is the curve rate). They hedge the long fixed-rate assets. They are off
+  balance sheet and their balance is the **notional**, which is not a cash flow:
+  - LCR: 0% (notional is not a cash flow; net settlement flows not modelled).
+  - NSFR: 0% (charged on replacement cost, which is zero at market).
+  - Ladder: not in the buckets and not contingent.
+  - IRRBB: two legs, -notional at maturity (fixed leg paid) and +notional at the next floating
+    reset (received).
 - **Balance sheet:** on the first day, asset balances are scaled so that, for every entity and
   currency, assets = liabilities / (1 - `equity_ratio`). Equity (6% of assets) is the gap; it is
   **not** a row in the table. Off-balance-sheet rows are excluded from this identity.

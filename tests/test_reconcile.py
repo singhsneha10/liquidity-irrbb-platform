@@ -69,7 +69,7 @@ def _value_changed(arrived):
 @pytest.mark.parametrize(
     ("damage", "message"),
     [
-        (_row_lost, "900 rows sent, 899 arrived"),
+        (_row_lost, r"(\d+) rows sent, \d+ arrived"),
         (_file_lost, "sent but did not arrive"),
         (_unexpected_file, "arrived but was not sent"),
         (_value_changed, "balance_mn for BANK_UK/GBP/asset"),
@@ -91,7 +91,12 @@ def test_quarantined_row_is_explained_in_rows_and_balance(raw_dir):
 
     result = reconcile(read_control_totals(raw_dir), arrived, validated)
     day = result.files.set_index("file").loc[FIRST_DAY]
-    assert (day["arrived_rows"], day["validated_rows"], day["quarantined_rows"]) == (900, 899, 1)
+    sent = len(arrived[FIRST_DAY])
+    assert (day["arrived_rows"], day["validated_rows"], day["quarantined_rows"]) == (
+        sent,
+        sent - 1,
+        1,
+    )
     balances = result.balances[result.balances["quarantined_mn"] != 0]
     assert len(balances) == 1
     row = balances.iloc[0]

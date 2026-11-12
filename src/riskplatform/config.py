@@ -38,6 +38,8 @@ class Category(_Strict):
     rate_type: RateType
     tenor_days: tuple[int, int]
     spread: float  # added to the reference curve rate (decimal; negative for most deposits)
+    # Optional: this category's own weight in non-home currencies (else foreign_currency_weight)
+    foreign_currency_weight: float | None = Field(default=None, gt=0, le=1)
 
     @model_validator(mode="after")
     def _check_tenor(self) -> "Category":
@@ -311,6 +313,9 @@ class LadderConfig(_Strict):
     """Maturity ladder buckets (config/liquidity/ladder.yaml)."""
 
     buckets: list[LadderBucket] = Field(min_length=1)
+    # Off-balance-sheet categories that are contingent liquidity needs (e.g. undrawn lines);
+    # other off-balance-sheet items (e.g. swap notionals) are not cash flows and are left out.
+    contingent_categories: list[str]
 
     @model_validator(mode="after")
     def _check_buckets(self) -> "LadderConfig":
@@ -437,6 +442,15 @@ class NiiRules(_Strict):
     assumption: str | None = None
 
 
+class SwapTreatment(_Strict):
+    """How an interest rate swap reprices: a fixed leg at maturity, a floating leg at reset."""
+
+    direction: Literal["pay_fixed", "receive_fixed"]
+    floating_reset_days: int = Field(gt=0)
+    ref: str
+    assumption: str | None = None
+
+
 class IrrbbRules(_Strict):
     """One rulebook's IRRBB parameters (config/irrbb/<regime>.yaml)."""
 
@@ -449,6 +463,7 @@ class IrrbbRules(_Strict):
     buckets: list[RepricingBucket] = Field(min_length=2)
     nmd: NmdRules
     nii: NiiRules
+    derivatives: dict[str, SwapTreatment]  # category -> swap treatment
 
     @model_validator(mode="after")
     def _check(self) -> "IrrbbRules":

@@ -94,6 +94,7 @@ amounts due within the horizon (`within_horizon_only`), a position counts only i
 | Financial institution deposits | 100% | due within 30 days |
 | Own debt (`term_debt`) | 100% | due within 30 days |
 | Undrawn committed facilities | 10% of the undrawn amount | always |
+| Interest rate swaps (notional) | 0%: notional is not a cash flow (LCR40.49; UK Art 30(4), 32(5)) | n/a |
 | Corporate loans (inflow) | 50% | due within 30 days |
 | Retail mortgages (inflow) | 50% | due within 30 days |
 
@@ -127,6 +128,7 @@ be at least 100% (Basel NSF20.2; UK Art 428b).
 | Corporate loans of one year or more (risk weight above 35%) | RSF 85% |
 | Mortgages of one year or more (risk weight 35% or below) | RSF 65% |
 | Undrawn committed facilities | RSF 5% |
+| Interest rate swaps (notional) | RSF 0%: charged on replacement cost, zero at market (NSF30.8, 30.23, 30.32; UK Art 428ah(2), 428k(4), 428s(2)) |
 
 ## Cash-flow maturity ladder
 
@@ -184,6 +186,9 @@ rulebook files.
     entity results are the stricter view.
 17. The UK composition caps are implemented from Article 17. The Annex I formula was not
     transcribed.
+17a. **Interest rate swaps** are at market with no collateral. Their notional is not an LCR cash
+    flow, and their net settlement flows within 30 days, the collateral look-back (LCR40.56 / UK
+    Chapter 4) and initial margin (85% RSF) are not modelled. The ladder leaves notionals out.
 
 **Scope of the rule review**
 
@@ -205,6 +210,9 @@ rulebook files.
 
 ## Latest results (synthetic data, illustrative)
 
-On the generated bank's last date (2026-10-23, synthetic rates): group LCR is 171.9% (Basel)
-and 173.3% (UK), and group NSFR is 140.6% (Basel) and 142.8% (UK). There are no breaches.
+On the generated bank's last date (2026-10-23, synthetic rates): group LCR is 186.6% (Basel)
+and 188.0% (UK), and group NSFR is 144.2% (Basel) and 146.4% (UK). There are no breaches.
+Foreign-currency books hold less central bank money and fewer government bonds than home books,
+so their per-currency LCRs range from about 50% to 150%. That is monitoring only, with no minimum,
+and normal for foreign books supported by the home book.
 These numbers describe a synthetic bank and say nothing about any real institution.

@@ -79,3 +79,13 @@ nii:
   horizon_months: 12
   ref: "SRP31.90, SRP98.25, SRP98.52"
   assumption: "SRP31.90 prescribes two NII scenarios without naming them: parallel up and down are used; 12-month horizon (Basel: typically 1-3 years) with a constant balance sheet"
+
+# Derivatives: a swap reprices as two legs. Pay-fixed: the fixed leg is paid until maturity
+# (-notional at maturity) and the floating leg is received until its next reset
+# (+notional at the reset). Notional only; no credit or collateral effects.
+derivatives:
+  interest_rate_swaps:
+    direction: pay_fixed
+    floating_reset_days: 90
+    ref: "SRP31.96 (notional repricing cash flows)"
+    assumption: "3-month floating leg; the next reset is taken as one full period away (the reset date is not in the data)"

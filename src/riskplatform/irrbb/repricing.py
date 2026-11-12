@@ -9,9 +9,15 @@ from config/irrbb/<regime>.yaml):
   reset if floating (set by the generator).
 - Amounts are signed: + for assets, - for liabilities. Equity is not a position, so it is
   excluded, as SRP31.97 requires.
+- Interest rate swaps (the categories under `derivatives` in config) reprice as two legs of
+  their notional: a pay-fixed swap is -notional at maturity (fixed leg paid) and +notional at
+  the floating leg's next reset (received). The legs net to zero, so the gap still ends at
+  assets minus liabilities. In the gap table the + leg counts as an asset, the - leg as a
+  liability.
 
 Simplifications: principal only (no coupons, commercial margins excluded, which SRP31.100
-allows); off-balance-sheet commitments are excluded (an undrawn line has no repricing cash flow);
+allows); off-balance-sheet commitments other than swaps are excluded (an undrawn line has no
+repricing cash flow); a swap's next floating reset is one full reset period away (not in the data);
 each bucket's cash flows sit at its midpoint; a non-maturity deposit's core part is one cash flow
 at its core maturity rather than spread over several buckets.
 """
@@ -53,6 +59,17 @@ def _slotted(positions: pd.DataFrame, rules: IrrbbRules) -> pd.DataFrame:
         pieces.append((years, balance[is_nmd] * share))  # core: stays until core_years
         overnight = np.full(len(category), OVERNIGHT_YEARS)
         pieces.append((overnight, balance[is_nmd] * (1.0 - share)))  # non-core: overnight
+    # Swaps (off balance sheet): two legs of the notional. Pay-fixed: -notional when the fixed
+    # leg ends (maturity) and +notional at the floating leg's next reset; receive-fixed: the reverse.
+    swaps = positions[positions["category"].isin(rules.derivatives)]
+    for category, rows in swaps.groupby("category"):
+        treatment = rules.derivatives[category]
+        notional = rows["balance_mn"].to_numpy(dtype=float)
+        fixed_sign = -1.0 if treatment.direction == "pay_fixed" else 1.0
+        fixed_years = rows["reprice_days"].to_numpy(dtype=float) / DAYS_PER_YEAR
+        reset_years = np.full(len(rows), treatment.floating_reset_days / DAYS_PER_YEAR)
+        pieces.append((fixed_years, fixed_sign * notional))
+        pieces.append((reset_years, -fixed_sign * notional))
     years = np.concatenate([p[0] for p in pieces])
     amounts = np.concatenate([p[1] for p in pieces])
     return pd.DataFrame({"bucket_no": bucket_index(years, rules.buckets), "amount": amounts})

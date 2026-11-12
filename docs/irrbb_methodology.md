@@ -50,8 +50,10 @@ point where it next reprices, and sits at the bucket midpoint:
 - fixed-rate positions at maturity, floating-rate positions at their next reset;
 - **non-maturity deposits** are split into a **core** part, repricing at its core maturity, and
   a **non-core** part, repricing overnight (SRP31.111);
-- amounts are signed (+ assets, - liabilities). Equity and off-balance-sheet commitments are
-  excluded.
+- **interest rate swaps** reprice as two legs of their notional: a pay-fixed swap is -notional
+  at maturity (fixed leg) and +notional at the next floating reset;
+- amounts are signed (+ assets, - liabilities). Equity and other off-balance-sheet items
+  (undrawn lines) are excluded.
 
 ### 2. Shocks (`irrbb/shocks.py`)
 
@@ -138,7 +140,9 @@ sum of the entities' figures in that currency, converted with FX and then combin
 10. **Group figures** assume value can be combined freely across entities.
 11. **No behavioural options:** no prepayment of loans or mortgages and no early redemption of
     term deposits.
-12. **No hedging:** the synthetic bank holds no interest rate swaps (see the results below).
+12. **Hedging:** pay-fixed swaps (5-20 years, at market) of the same size in every book. A swap
+    reprices as -notional at maturity and +notional at the next floating reset, which is taken as
+    one full 3-month period away. There is no credit, collateral or hedge-accounting modelling.
 13. **Scope of the rule review:** UK rule versions after 1 January 2027 were not reviewed, and the
     SS31/15 text read was not labelled with its version.
 
@@ -157,24 +161,25 @@ sum of the entities' figures in that currency, converted with FX and then combin
 
 ## Latest results (synthetic data, illustrative)
 
-On the generated bank's last date (2026-10-23, synthetic rates), the worst scenario is the
-**steepener**:
+On the generated bank's last date (2026-10-23, synthetic rates), with pay-fixed swap hedges:
 
-| | EVE risk | % of Tier 1 | Outlier |
+| | Basel EVE risk (% of Tier 1, worst scenario) | UK EVE risk | Outlier |
 |---|---:|---:|---|
-| BANK_UK (GBP) | 489.0 | 30.5% | yes |
-| BANK_EU (EUR) | 455.2 | 22.2% | yes |
-| BANK_US (USD) | 184.3 | 10.7% | no |
-| Group (GBP) | 1,014.2 | 22.0% | yes |
+| BANK_UK (GBP) | 335.2 (20.5%, steepener) | 335.1 (20.5%) | **yes** |
+| BANK_EU (EUR) | 253.1 (13.6%, short down) | 259.2 (13.9%) | no |
+| BANK_US (USD) | 294.6 (14.9%, parallel down) | 275.4 (13.9%) | no |
+| Group (GBP) | 659.1 (14.2%, short down) | 664.7 (14.3%) | no |
 
-**Why the synthetic bank is an outlier:** it holds long fixed-rate mortgages (up to about 25
-years) and long bonds, funded by short deposits, **with no interest rate hedging**. The
-steepener is the worst case for that book: long rates rise, cutting the value of long fixed
-assets, while short rates fall, raising the value of short liabilities. Real banks hedge much of
-this with interest rate swaps and typically report delta EVE of roughly 5-15% of Tier 1. The
-calculation is the one verified above. The result reflects the synthetic book, and adding
-hedging to the generator is a planned realism step.
+**What the hedges do:** the bank holds long fixed-rate mortgages (up to about 25 years) and long
+bonds, funded by short deposits. Without hedges, the group loss was 22.0% of Tier 1 (an
+outlier), with the steepener as the worst case. Pay-fixed interest rate swaps (5-20 years) bring
+the group to 14.2%, below the 15% threshold. `tests/test_irrbb_run.py` checks on the generated
+bank that the hedges reduce the group's EVE risk.
 
-At these rate levels (2-4%), the Basel and UK results coincide. The UK floor binds only in the
-down scenarios, which are not the worst case, and gains do not offset because every currency
-loses under the steepener.
+**What remains:** the hedge size is the same for every book, so BANK_UK is still under-hedged
+(an outlier, steepener) while BANK_US is slightly over-hedged (worst case parallel down).
+"A subsidiary is an outlier while the group is not" is a realistic finding.
+
+**Basel vs UK:** the worst cases are now often "down" scenarios. There the UK floor (-100 bp at
+the short end) limits how far rates fall, and the UK lets gains offset losses at 50%, so the two
+regimes give slightly different results.

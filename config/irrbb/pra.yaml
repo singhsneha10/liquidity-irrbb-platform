@@ -77,3 +77,13 @@ nii:
   horizon_months: 12
   ref: "SS31/15 2.9C"
   assumption: "the UK sets no NII outlier test or scenarios; parallel up and down over 12 months with a constant balance sheet are used, consistent with the Basel file"
+
+# Derivatives: a swap reprices as two legs. Pay-fixed: the fixed leg is paid until maturity
+# (-notional at maturity) and the floating leg is received until its next reset
+# (+notional at the reset). Notional only; no credit or collateral effects.
+derivatives:
+  interest_rate_swaps:
+    direction: pay_fixed
+    floating_reset_days: 90
+    ref: "ICAA 9.13-9.15 (standardised framework)"
+    assumption: "3-month floating leg; the next reset is taken as one full period away (the reset date is not in the data)"

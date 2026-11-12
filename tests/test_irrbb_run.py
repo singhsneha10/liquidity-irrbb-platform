@@ -140,3 +140,17 @@ def test_command_end_to_end(small_cfg, tmp_path):
     summary = json.loads((folder / "summary.json").read_text(encoding="utf-8"))
     assert summary["source_run_id"] == quality.run_id
     assert code == (1 if summary["outliers"] else 0)
+
+
+def test_hedges_reduce_the_groups_eve_risk(small_cfg):
+    raw = generate(small_cfg)
+    rules = {"basel": RULES["basel"]}
+    hedged = compute_irrbb(raw.positions, raw.rates, raw.fx, small_cfg, rules)
+    unhedged_positions = raw.positions[raw.positions["category"] != "interest_rate_swaps"]
+    unhedged = compute_irrbb(unhedged_positions, raw.rates, raw.fx, small_cfg, rules)
+
+    def group_risk(result):
+        risk = result.risk
+        return risk[risk["level"] == "group"].set_index("date")["eve_risk"]
+
+    assert (group_risk(hedged) < group_risk(unhedged)).all()

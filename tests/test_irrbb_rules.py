@@ -134,3 +134,9 @@ def _edges_not_rising(raw):
 def test_broken_rulebooks_are_rejected(change):
     with pytest.raises(ValidationError):
         IrrbbRules.model_validate(_broken(change))
+
+
+def test_swap_treatment(rules):
+    swap = rules.derivatives["interest_rate_swaps"]
+    assert (swap.direction, swap.floating_reset_days) == ("pay_fixed", 90)
+    assert swap.ref.strip()

@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from riskplatform.config import load_irrbb_rules
+from riskplatform.config import IrrbbRules, load_irrbb_rules
 from riskplatform.ingestion.generate import generate
 from riskplatform.irrbb.repricing import repricing_flows, repricing_gap
 
@@ -82,3 +82,18 @@ def test_gap_ends_at_assets_minus_liabilities_on_the_generated_bank(cfg):
 def test_missing_column_is_an_error():
     with pytest.raises(ValueError, match="reprice_days"):
         repricing_flows(_positions().drop(columns="reprice_days"), BASEL)
+
+
+def test_pay_fixed_swap_reprices_as_two_offsetting_legs():
+    swap = _positions(("interest_rate_swaps", "off_balance_sheet", 100, 3650))
+    flows = repricing_flows(swap, BASEL).set_index("bucket")["amount"]
+    assert flows.to_dict() == pytest.approx({"1M-3M": 100.0, "9Y-10Y": -100.0})  # 90-day reset
+
+
+def test_receive_fixed_swap_is_the_reverse():
+    raw = BASEL.model_dump()
+    raw["derivatives"]["interest_rate_swaps"]["direction"] = "receive_fixed"
+    receive = IrrbbRules.model_validate(raw)
+    swap = _positions(("interest_rate_swaps", "off_balance_sheet", 100, 3650))
+    flows = repricing_flows(swap, receive).set_index("bucket")["amount"]
+    assert flows.to_dict() == pytest.approx({"1M-3M": -100.0, "9Y-10Y": 100.0})
