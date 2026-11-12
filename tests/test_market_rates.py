@@ -13,11 +13,15 @@ from pydantic import ValidationError
 
 from riskplatform.config import MarketRatesConfig, load_market_rates_config
 from riskplatform.ingestion.market_rates import (
+    _boe_date,
     _workbook_is_needed,
     fetch_curves,
+    fetch_fx,
+    parse_boe_iadb_csv,
     parse_boe_workbook,
     parse_ecb_csv,
     parse_fred_csv,
+    write_fx_outputs,
     write_outputs,
 )
 
@@ -31,6 +35,12 @@ def market_cfg() -> MarketRatesConfig:
 
 
 # --- Samples in each source's format ---------------------------------------------------------
+
+
+def boe_fx_csv(series: str) -> str:
+    """Bank of England Database CSV: currency per GBP 1, one value missing."""
+    lines = [f"DATE,{series}", "20 Jul 2026,1.25", "21 Jul 2026,", "22 Jul 2026,1.20"]
+    return "\n".join(lines) + "\n"
 
 
 def fred_csv(series: str) -> str:
@@ -104,6 +114,10 @@ def fake_fetch(market_cfg: MarketRatesConfig):
         responses[market_cfg.fred.url.format(series=code, start=start)] = fred_csv(code).encode()
     for code in market_cfg.ecb.series:
         responses[market_cfg.ecb.url.format(series=code, start=start)] = ecb_csv(code).encode()
+    fx_start = _boe_date(market_cfg.start_date)
+    for code in market_cfg.boe_fx.series.values():
+        url = market_cfg.boe_fx.url.format(series=code, start=fx_start)
+        responses[url] = boe_fx_csv(code).encode()
     return responses.__getitem__  # KeyError for any URL the code was not expected to request
 
 
@@ -208,5 +222,59 @@ def test_config_rejects_url_without_placeholders(market_cfg):
 def test_config_rejects_two_sources_for_one_currency(market_cfg):
     raw = market_cfg.model_dump()
     raw["ecb"]["currency"] = "USD"
+    with pytest.raises(ValidationError):
+        MarketRatesConfig.model_validate(raw)
+
+
+# --- FX (Bank of England Database) -------------------------------------------------------------
+
+
+def test_boe_date_does_not_depend_on_the_locale():
+    assert _boe_date(date(2026, 7, 5)) == "05/Jul/2026"
+
+
+def test_boe_fx_parser_drops_missing_values():
+    points = parse_boe_iadb_csv(boe_fx_csv("XUDLUSS"), "XUDLUSS")
+    assert points["quote"].tolist() == [1.25, 1.20]
+    assert points["date"].dt.day.tolist() == [20, 22]
+
+
+def test_fetch_fx_stores_reporting_currency_per_unit(market_cfg):
+    fx = fetch_fx(market_cfg, fake_fetch(market_cfg))
+    assert set(fx["currency"]) == set(market_cfg.boe_fx.series)
+    usd = fx[fx["currency"] == "USD"].set_index("date")["to_reporting"]
+    assert usd[pd.Timestamp("2026-07-20")] == pytest.approx(1 / 1.25)  # 1.25 USD per GBP
+
+
+def test_empty_fx_series_is_an_error(market_cfg):
+    fetch = fake_fetch(market_cfg)
+    usd_url = market_cfg.boe_fx.url.format(
+        series=market_cfg.boe_fx.series["USD"], start=_boe_date(market_cfg.start_date)
+    )
+
+    def fetch_with_gap(url):
+        return b"DATE,XUDLUSS\n" if url == usd_url else fetch(url)
+
+    with pytest.raises(ValueError, match="XUDLUSS"):
+        fetch_fx(market_cfg, fetch_with_gap)
+
+
+def test_write_fx_outputs_records_provenance(market_cfg, tmp_path):
+    fx_source = market_cfg.boe_fx.model_copy(
+        update={"output_file": tmp_path / "fx.parquet", "provenance_file": tmp_path / "fx.json"}
+    )
+    cfg = market_cfg.model_copy(update={"boe_fx": fx_source})
+    fx = fetch_fx(cfg, fake_fetch(cfg))
+    provenance = write_fx_outputs(cfg, fx, datetime(2026, 11, 12, 9, 0, tzinfo=UTC))
+    assert provenance["rows"] == len(fx)
+    assert provenance["sha256"] == hashlib.sha256(fx_source.output_file.read_bytes()).hexdigest()
+    assert "1 / quote" in provenance["quote"]
+    saved = json.loads(fx_source.provenance_file.read_text(encoding="utf-8"))
+    assert saved["series"] == market_cfg.boe_fx.series
+
+
+def test_config_rejects_an_fx_series_for_the_reporting_currency(market_cfg):
+    raw = market_cfg.model_dump()
+    raw["boe_fx"]["series"]["GBP"] = "XUDLGBP"
     with pytest.raises(ValidationError):
         MarketRatesConfig.model_validate(raw)

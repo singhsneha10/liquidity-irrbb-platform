@@ -58,7 +58,8 @@ class RealCurves(_Strict):
     """Where real curves are read from (a file saved by the market_rates fetch, never live)."""
 
     curves_file: Path
-    max_fill_days: int = Field(ge=0)  # calendar days a missing curve may be filled from before
+    fx_file: Path  # saved Bank of England FX rates (GBP per unit)
+    max_fill_days: int = Field(ge=0)  # calendar days a missing curve or rate may be filled from
 
 
 class RatesConfig(_Strict):
@@ -351,6 +352,24 @@ class BoeSource(_Strict):
     sheets: list[str] = Field(min_length=1)
 
 
+class BoeFxSource(_Strict):
+    """Bank of England Database FX series, each quoted as units of currency per reporting unit."""
+
+    reporting_currency: str
+    url: str  # template with {series} and {start} placeholders
+    series: dict[str, str] = Field(min_length=1)  # currency -> series code
+    output_file: Path
+    provenance_file: Path
+
+    @model_validator(mode="after")
+    def _check(self) -> "BoeFxSource":
+        if "{series}" not in self.url or "{start}" not in self.url:
+            raise ValueError(f"url must contain {{series}} and {{start}}: {self.url}")
+        if self.reporting_currency in self.series:
+            raise ValueError("the reporting currency needs no FX series (its rate is 1)")
+        return self
+
+
 class MarketRatesConfig(_Strict):
     start_date: date
     output_file: Path
@@ -360,6 +379,7 @@ class MarketRatesConfig(_Strict):
     fred: SeriesSource
     ecb: SeriesSource
     boe: BoeSource
+    boe_fx: BoeFxSource
 
     @property
     def currencies(self) -> list[str]:

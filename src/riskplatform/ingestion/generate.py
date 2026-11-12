@@ -17,6 +17,7 @@ from riskplatform.controls import write_control_totals
 from riskplatform.schemas import (
     fx_schema,
     market_curves_schema,
+    market_fx_schema,
     positions_schema,
     rates_schema,
 )
@@ -198,6 +199,25 @@ def build_curves(cfg: GeneratorConfig, n_days: int, rng: np.random.Generator) ->
     return base[None, :, :] + shifts[:, :, None]
 
 
+FETCH_HINT = "Save it first with: python -m riskplatform.ingestion.market_rates"
+
+
+def _latest_on_or_before(
+    source_dates: pd.DatetimeIndex, dates: pd.DatetimeIndex, max_days: int, label: str
+) -> np.ndarray:
+    """For each date, the position of the latest source date on or before it (holiday fill).
+
+    Raises ValueError, listing the dates, if a date has no source date within max_days.
+    """
+    latest = source_dates.searchsorted(dates, side="right") - 1  # -1: nothing on or before
+    age = dates - source_dates[latest.clip(0)]
+    missing = (latest < 0) | (age > pd.Timedelta(days=max_days))
+    if missing.any():
+        listed = ", ".join(day.date().isoformat() for day in dates[missing])
+        raise ValueError(f"{label}: nothing within {max_days} days before: {listed}")
+    return latest
+
+
 def load_real_curves(cfg: GeneratorConfig, dates: pd.DatetimeIndex) -> np.ndarray:
     """Read saved real curves and lay them on the generator's dates and tenor grid.
 
@@ -209,15 +229,12 @@ def load_real_curves(cfg: GeneratorConfig, dates: pd.DatetimeIndex) -> np.ndarra
     real = cfg.rates.real
     path = Path(real.curves_file)
     if not path.exists():
-        raise FileNotFoundError(
-            f"{path} not found. Save it first with: python -m riskplatform.ingestion.market_rates"
-        )
+        raise FileNotFoundError(f"{path} not found. {FETCH_HINT}")
     stored = pd.read_parquet(path)
     stored = stored[stored["currency"].isin(cfg.currencies)]
     stored = market_curves_schema(cfg.currencies).validate(stored)
 
     grid = np.array(cfg.rates.tenors_years)
-    max_age = pd.Timedelta(days=real.max_fill_days)
     curves = np.empty((len(dates), len(cfg.currencies), len(grid)))
     for j, currency in enumerate(cfg.currencies):
         by_day = stored[stored["currency"] == currency].sort_values("tenor_years").groupby("date")
@@ -227,16 +244,41 @@ def load_real_curves(cfg: GeneratorConfig, dates: pd.DatetimeIndex) -> np.ndarra
         source_dates = pd.DatetimeIndex([day for day, _ in days])
         on_grid = np.array([curve for _, curve in days])
 
-        latest = source_dates.searchsorted(dates, side="right") - 1  # -1: nothing on or before
-        age = dates - source_dates[latest.clip(0)]
-        missing = (latest < 0) | (age > max_age)
-        if missing.any():
-            listed = ", ".join(day.date().isoformat() for day in dates[missing])
-            raise ValueError(
-                f"{currency}: no curve within {real.max_fill_days} days before: {listed}"
-            )
+        latest = _latest_on_or_before(source_dates, dates, real.max_fill_days, f"{currency} curve")
         curves[:, j, :] = on_grid[latest]
     return curves
+
+
+def load_real_fx(cfg: GeneratorConfig, dates: pd.DatetimeIndex) -> pd.DataFrame:
+    """Read saved real FX rates and lay them on the generator's dates (same shape as build_fx).
+
+    A date with no rate (a holiday) uses the latest earlier rate, at most
+    rates.real.max_fill_days calendar days old. The reporting currency is added at 1.
+    """
+    real = cfg.rates.real
+    path = Path(real.fx_file)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found. {FETCH_HINT}")
+    reporting = cfg.fx.reporting_currency
+    others = [c for c in cfg.currencies if c != reporting]
+    stored = pd.read_parquet(path)
+    stored = market_fx_schema(others).validate(stored[stored["currency"].isin(others)])
+
+    frames = []
+    for currency in cfg.currencies:
+        if currency == reporting:
+            rate = np.ones(len(dates))
+        else:
+            series = stored[stored["currency"] == currency].sort_values("date")
+            if series.empty:
+                raise ValueError(f"{path}: no FX rates for {currency}")
+            source_dates = pd.DatetimeIndex(series["date"])
+            latest = _latest_on_or_before(
+                source_dates, dates, real.max_fill_days, f"{currency} FX rate"
+            )
+            rate = series["to_reporting"].to_numpy()[latest]
+        frames.append(pd.DataFrame({"date": dates, "currency": currency, "to_reporting": rate}))
+    return pd.concat(frames, ignore_index=True)
 
 
 def build_rates(cfg: GeneratorConfig, dates: pd.DatetimeIndex, curves: np.ndarray) -> pd.DataFrame:
@@ -304,8 +346,11 @@ def generate(cfg: GeneratorConfig) -> RawData:
     positions = build_positions(cfg, book, dates, curves, path_rng)
     positions = positions_schema(cfg).validate(positions)
     rates = rates_schema(cfg).validate(build_rates(cfg, dates, curves))
-    # Real-mode FX (saved Bank of England rates) comes in a later step; synthetic until then.
-    fx = fx_schema(cfg).validate(build_fx(cfg, dates, fx_rng))
+    if cfg.rates.source == "real":
+        fx = load_real_fx(cfg, dates)
+    else:
+        fx = build_fx(cfg, dates, fx_rng)
+    fx = fx_schema(cfg).validate(fx)
     return RawData(positions=positions, rates=rates, fx=fx)
 
 

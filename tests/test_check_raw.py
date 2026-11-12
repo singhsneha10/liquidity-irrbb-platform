@@ -157,7 +157,11 @@ def test_command_line_exit_codes(raw_dir, capsys):
 def _real_mode(cfg) -> GeneratorConfig:
     raw = cfg.model_dump()
     raw["rates"]["source"] = "real"
-    raw["rates"]["real"] = {"curves_file": "unused.parquet", "max_fill_days": 4}
+    raw["rates"]["real"] = {
+        "curves_file": "unused.parquet",
+        "fx_file": "unused.parquet",
+        "max_fill_days": 4,
+    }
     return GeneratorConfig.model_validate(raw)
 
 
@@ -177,7 +181,7 @@ def test_command_line_reports_skipped_checks(cfg, raw_dir, tmp_path, capsys):
         f"base: {CONFIG_PATH.as_posix()}",
         "rates:",
         "  source: real",
-        "  real: {curves_file: unused.parquet, max_fill_days: 4}",
+        "  real: {curves_file: unused.parquet, fx_file: unused.parquet, max_fill_days: 4}",
     ]
     real_config.write_text("\n".join(lines), encoding="utf-8")
     assert main(["--config", str(real_config), "--raw", str(raw_dir)]) == 0

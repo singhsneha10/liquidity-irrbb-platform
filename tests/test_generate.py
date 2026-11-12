@@ -194,11 +194,33 @@ def _write_curves(cfg, path, drop=()):
     return path
 
 
-def _real_cfg(cfg, curves_file, n_days=10):
+def _real_fx_rate(currency_index: int, day_index: int) -> float:
+    """Simple known FX rates (GBP per unit), different per currency and per day."""
+    return 0.70 + 0.10 * currency_index + 0.001 * day_index
+
+
+def _write_fx(cfg, path, drop=()):
+    """Save FX rates for every non-reporting currency and CURVE_DAYS, leaving out drop."""
+    dropped = {(ccy, pd.Timestamp(when)) for ccy, when in drop}
+    rows = [
+        {"date": day, "currency": currency, "to_reporting": _real_fx_rate(c, d), "source": "boe"}
+        for c, currency in enumerate(cfg.currencies)
+        if currency != cfg.fx.reporting_currency
+        for d, day in enumerate(CURVE_DAYS)
+        if (currency, day) not in dropped
+    ]
+    pd.DataFrame(rows).to_parquet(path, index=False)
+    return path
+
+
+def _real_cfg(cfg, curves_file, n_days=10, fx_file=None):
+    """Real-mode config; writes a complete FX file next to the curves unless one is given."""
+    if fx_file is None:
+        fx_file = _write_fx(cfg, Path(curves_file).parent / "fx.parquet")
     raw = cfg.model_dump()
     raw["n_days"] = n_days
     raw["rates"]["source"] = "real"
-    raw["rates"]["real"] = {"curves_file": curves_file, "max_fill_days": 4}
+    raw["rates"]["real"] = {"curves_file": curves_file, "fx_file": fx_file, "max_fill_days": 4}
     return GeneratorConfig.model_validate(raw)
 
 
@@ -283,3 +305,42 @@ def test_fx_is_written_with_control_totals(generated, tmp_path):
     )
     control = json.loads((tmp_path / "control_totals.json").read_text(encoding="utf-8"))
     assert control["files"]["fx.parquet"] == {"table": "fx", "rows": len(generated.fx)}
+
+
+# --- Real-mode FX ------------------------------------------------------------------------------
+
+
+def _fx_on(fx, currency, day):
+    match = (fx["currency"] == currency) & (fx["date"] == pd.Timestamp(day))
+    return fx.loc[match, "to_reporting"].item()
+
+
+def test_real_fx_is_laid_on_the_dates_with_reporting_currency_at_one(cfg, tmp_path):
+    fx = generate(_real_cfg(cfg, _write_curves(cfg, tmp_path / "curves.parquet"))).fx
+    day = "2026-08-05"
+    d = list(CURVE_DAYS).index(pd.Timestamp(day))
+    for c, currency in enumerate(cfg.currencies):
+        expected = 1.0 if currency == cfg.fx.reporting_currency else _real_fx_rate(c, d)
+        assert _fx_on(fx, currency, day) == pytest.approx(expected)
+
+
+def test_real_fx_missing_on_a_holiday_uses_the_previous_day(cfg, tmp_path):
+    curves = _write_curves(cfg, tmp_path / "curves.parquet")
+    fx_file = _write_fx(cfg, tmp_path / "fx.parquet", drop=[("USD", "2026-08-10")])
+    fx = generate(_real_cfg(cfg, curves, fx_file=fx_file)).fx
+    assert _fx_on(fx, "USD", "2026-08-10") == _fx_on(fx, "USD", "2026-08-07")
+    assert _fx_on(fx, "EUR", "2026-08-10") != _fx_on(fx, "EUR", "2026-08-07")
+
+
+def test_real_fx_gap_longer_than_allowed_is_an_error(cfg, tmp_path):
+    curves = _write_curves(cfg, tmp_path / "curves.parquet")
+    week = [("EUR", day) for day in pd.bdate_range("2026-08-04", "2026-08-10")]
+    fx_file = _write_fx(cfg, tmp_path / "fx.parquet", drop=week)
+    with pytest.raises(ValueError, match="EUR FX rate.*2026-08-10"):
+        generate(_real_cfg(cfg, curves, fx_file=fx_file))
+
+
+def test_real_mode_without_saved_fx_explains_how_to_get_it(cfg, tmp_path):
+    curves = _write_curves(cfg, tmp_path / "curves.parquet")
+    with pytest.raises(FileNotFoundError, match="market_rates"):
+        generate(_real_cfg(cfg, curves, fx_file=tmp_path / "no_fx.parquet"))

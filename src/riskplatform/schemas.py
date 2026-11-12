@@ -114,6 +114,25 @@ def market_curves_schema(currencies: list[str]) -> pa.DataFrameSchema:
     )
 
 
+def market_fx_schema(currencies: list[str]) -> pa.DataFrameSchema:
+    """Contract for fetched real FX rates (one row per date and non-reporting currency).
+
+    to_reporting is reporting currency per one unit; the reporting currency is not stored (its
+    rate is always 1, added by the generator).
+    """
+    return pa.DataFrameSchema(
+        columns={
+            "date": pa.Column("datetime64[ns]"),
+            "currency": pa.Column(str, pa.Check.isin(currencies)),
+            "to_reporting": pa.Column(float, pa.Check.gt(0)),
+            "source": pa.Column(str, pa.Check.isin(["boe"])),
+        },
+        unique=["date", "currency"],
+        strict=True,
+        coerce=True,
+    )
+
+
 def _is_json_object(text: str) -> bool:
     """True if the text is a JSON object, e.g. '{"balance_mn": -5.0}'."""
     try:

@@ -170,6 +170,8 @@ not yet on the generator's grid.
 |---|---|
 | `data/external/curves.parquet` | The curves (contract: `market_curves_schema`). |
 | `data/external/curves_provenance.json` | When it was downloaded (UTC), from which URLs, row count, SHA-256 fingerprint of the Parquet file, and each currency's date range and tenors. |
+| `data/external/fx.parquet` | Bank of England FX rates: `date`, `currency` (non-reporting only), `to_reporting` (GBP per unit), `source` (contract: `market_fx_schema`). |
+| `data/external/fx_provenance.json` | The same record for the FX file, including the series codes and how quotes were converted. |
 
 Both files are under `data/`, which is ignored by Git, so each machine fetches its own copy.
 
@@ -211,8 +213,12 @@ The quality layer stops the run if any business day lacks a rate for any currenc
   per unit) and moves by a daily random percentage (`fx.daily_vol`, 0.4%), so it cannot turn
   negative. Day one has no move. It has its own random stream, so adding FX did not change any
   positions or rates.
-- **Real mode:** for now real mode still uses the synthetic FX rates next to the real curves.
-  Real Bank of England rates are planned as the next step.
+- **Real mode:** the generator reads the saved Bank of England rates
+  (`rates.real.fx_file`, see section 3). They are series XUDLUSS (USD) and XUDLERS (EUR), each
+  quoted as units of currency per GBP 1 and stored as GBP per unit (1 / quote). A business day
+  without a rate (a UK holiday, such as 31 Aug 2026) uses the latest earlier rate, up to
+  `rates.real.max_fill_days` (4) calendar days; a longer gap stops generation with an error.
+  GBP is added at 1.
 
 ---
 
@@ -262,6 +268,8 @@ portfolio.
 | **FRED**, Federal Reserve Bank of St. Louis | Market yield on US Treasury securities at constant maturity (series `DGS1MO` ... `DGS30`), author: Board of Governors of the Federal Reserve System (US) | The series pages mark these series "Public Domain: Citation Requested". The FRED terms of use (fred.stlouisfed.org/legal) cover personal, non-commercial use. They ask users to cite the original source and note the data was accessed via FRED. They also prohibit storing, caching or archiving FRED content, and including it in any database or compilation, and they need the Bank's consent for commercial use. | "Source: Board of Governors of the Federal Reserve System (US), Market Yield on U.S. Treasury Securities at Constant Maturity [DGS1MO-DGS30], retrieved from FRED, Federal Reserve Bank of St. Louis." |
 | **ECB** Data Portal | Euro-area AAA government bond spot curve (dataset `YC`, `SR_3M` ... `SR_30Y`) | The ECB website terms allow free use of the information, provided it is reproduced accurately, any changes are stated, and the ECB is cited as the source. The yield-curve page says the data are made available "for public information purposes only", and that MTS Markets and Fitch provide the inputs. | "Source: European Central Bank (ECB Data Portal), euro area yield curves. Converted from percent to decimal and interpolated onto a fixed tenor grid." |
 | **Bank of England** | UK nominal gilt spot curve, from the yield curve archives | The Bank's legal page says database data are reproduced under the UK Open Government Licence. It also says the Bank typically grants permission for non-commercial re-use, and that download is for personal or internal, non-commercial use unless stated otherwise. The yield-curve page says there is no objection to electronic storage if those conditions are followed. The curves use third-party inputs ("Bloomberg Finance L.P., Tradeweb and Bank calculations"). The pages do not say explicitly whether the Open Government Licence covers the yield curves, so this project treats them as non-commercial use with attribution. | "Source: Bank of England, UK nominal yield curve (spot), Bank of England yield curve data. Converted from percent to decimal and interpolated onto a fixed tenor grid." |
+
+| **Bank of England** (FX) | Daily spot rates XUDLUSS (USD per GBP) and XUDLERS (EUR per GBP), from the Bank of England Database | The Bank's legal page says reproduction of data in the Bank of England Database is subject to the UK Open Government Licence. These series come from that Database. This wording was read on the legal page, not on the series pages. | "Source: Bank of England Database, series XUDLUSS and XUDLERS (contains public sector information licensed under the Open Government Licence)." |
 
 What this means here:
 1. The downloaded curves stay in the Git-ignored `data/` folder on the user's own machine, and

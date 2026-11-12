@@ -30,3 +30,12 @@ boe:
   workbook_name_contains: "GLC Nominal daily data"
   # Read in this order; where both give a tenor, the later sheet wins.
   sheets: ["3. spot, short end", "4. spot curve"]
+
+# FX: Bank of England daily spot rates (Bank of England Database). Each series is quoted as units
+# of the currency per GBP 1 (e.g. 1.35 USD per GBP); the code stores GBP per unit (1 / quote).
+boe_fx:
+  reporting_currency: GBP
+  url: "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp?csv.x=yes&Datefrom={start}&Dateto=now&SeriesCodes={series}&CSVF=TN&UsingCodes=Y&VPD=Y&VFD=N"
+  series: {USD: XUDLUSS, EUR: XUDLERS}
+  output_file: data/external/fx.parquet
+  provenance_file: data/external/fx_provenance.json

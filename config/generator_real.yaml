@@ -9,4 +9,5 @@ rates:
   source: real
   real:
     curves_file: data/external/curves.parquet
+    fx_file: data/external/fx.parquet  # saved Bank of England FX rates
     max_fill_days: 4  # longest normal closure: Good Friday + Easter Monday -> Monday uses Thursday
