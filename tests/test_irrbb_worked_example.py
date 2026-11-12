@@ -44,7 +44,9 @@ EXPECTED_NII = {
     "basel": {"parallel_up": -6.581520, "parallel_down": 6.581520},
     "pra": {"parallel_up": -6.581520, "parallel_down": 4.786225},
 }
-NOT_BUILT = pytest.mark.xfail(strict=True, reason="IRRBB calculations are built in steps 5.4-5.6")
+NOT_BUILT = pytest.mark.xfail(
+    strict=True, reason="delta EVE and delta NII are built in steps 5.5-5.6"
+)
 
 
 def test_shapes_reproduce_the_basel_example_srp31_92():
@@ -88,7 +90,6 @@ def test_delta_nii_matches_the_hand_calculation(regime):
     assert result == pytest.approx(EXPECTED_NII[regime], abs=1e-6)
 
 
-@NOT_BUILT
 def test_positions_give_the_bucketed_cash_flows():
     from riskplatform.irrbb.repricing import repricing_flows
 
