@@ -21,3 +21,5 @@ infra/**/.terraform/
 *.tfvars
 build/
 dist/
+.tmp_dagster_home_*/
+.dagster/

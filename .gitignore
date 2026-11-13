@@ -9,3 +9,5 @@ __pycache__/
 data/
 build/
 dist/
+.tmp_dagster_home_*/
+.dagster/
