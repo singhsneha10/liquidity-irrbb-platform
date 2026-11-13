@@ -17,6 +17,8 @@ Exit codes, so a scheduler can tell a broken run from a run that found something
 
 All outputs go under --data (default data/): raw/, validated/, quality_runs/, metrics/, irrbb/,
 and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
+With backend s3 in --storage (config/storage.yaml, or RISKPLATFORM_STORAGE_BACKEND=s3), the
+run's outputs are then also copied to S3 under its run id (riskplatform.storage).
 """
 
 import argparse
@@ -35,15 +37,18 @@ from riskplatform.config import (
     LadderConfig,
     LiquidityRules,
     QualityConfig,
+    StorageConfig,
     load_generator_config,
     load_ladder_config,
     load_quality_config,
+    load_storage_config,
 )
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import load_irrbb_regimes, run_irrbb
 from riskplatform.logs import log_to_file, setup_logging
 from riskplatform.metrics.run import load_liquidity_regimes, run_metrics
 from riskplatform.quality.run import run_quality
+from riskplatform.storage import make_client, publish_run
 from riskplatform.validation.check_raw import run_checks
 
 logger = logging.getLogger(__name__)
@@ -63,6 +68,7 @@ class StageResult:
 @dataclass(frozen=True)
 class PipelineResult:
     stages: list[StageResult]
+    run_id: str | None = None  # the quality run's id, once that stage has run
 
     @property
     def status(self) -> StageStatus:
@@ -110,6 +116,7 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
     data_dir = Path(data_dir)
     raw_dir, validated_dir = data_dir / "raw", data_dir / "validated"
     cfg = inputs.generator
+    seen: dict[str, str] = {}  # the quality run's id, recorded by quality_step
 
     def generate_step() -> tuple[StageStatus, str]:
         raw = generate(cfg)
@@ -125,6 +132,7 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
 
     def quality_step() -> tuple[StageStatus, str]:
         run = run_quality(raw_dir, data_dir, cfg, inputs.quality)
+        seen["run_id"] = run.run_id
         report = run.run_dir / "breaks_report.md"
         if run.status != "published":
             return "stopped", f"run {run.run_id} stopped: {'; '.join(run.report['stop_reasons'])}"
@@ -159,7 +167,7 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
         log("Stage %s: %s in %.1fs (%s)", name, status.upper(), stage.seconds, detail)
         if status == "stopped":
             break
-    return PipelineResult(stages)
+    return PipelineResult(stages, run_id=seen.get("run_id"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,10 +177,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--liquidity", type=Path, default=Path("config/liquidity"))
     parser.add_argument("--irrbb", type=Path, default=Path("config/irrbb"))
     parser.add_argument("--data", type=Path, default=Path("data"))
+    parser.add_argument("--storage", type=Path, default=Path("config/storage.yaml"))
     args = parser.parse_args(argv)
 
     setup_logging()
     inputs = load_inputs(args.config, args.quality, args.liquidity, args.irrbb)
+    storage = load_storage_config(args.storage)  # checked before any data is written
     log_path = args.data / "logs" / f"pipeline-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.log"
     with log_to_file(log_path):
         logger.info("Pipeline starting with %s; log file %s", args.config, log_path)
@@ -187,7 +197,30 @@ def main(argv: list[str] | None = None) -> int:
             result.exit_code,
             ", ".join(f"{stage.name} {stage.status}" for stage in result.stages),
         )
+    if storage.backend == "s3":  # after the log file is complete, so it is published whole
+        publish(result, storage, args.data, log_path)
     return result.exit_code
+
+
+def publish(result: PipelineResult, storage: StorageConfig, data_dir: Path, log_path: Path) -> None:
+    """Copy the run's outputs to S3; a run that stopped before the quality stage has none."""
+    if result.run_id is None:
+        logger.warning("Nothing to publish: the pipeline stopped before the quality stage")
+        return
+    stages = [
+        {"name": s.name, "status": s.status, "detail": s.detail, "seconds": round(s.seconds, 2)}
+        for s in result.stages
+    ]
+    publish_run(
+        make_client(storage),
+        storage,
+        data_dir,
+        result.run_id,
+        result.status,
+        result.exit_code,
+        stages,
+        log_file=log_path,
+    )
 
 
 if __name__ == "__main__":

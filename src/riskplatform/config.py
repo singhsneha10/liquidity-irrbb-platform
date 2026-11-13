@@ -2,6 +2,7 @@
 
 import itertools
 import math
+import os
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -592,3 +593,37 @@ class MarketRatesConfig(_Strict):
 def load_market_rates_config(path: str | Path) -> MarketRatesConfig:
     """Read a YAML file and return a validated MarketRatesConfig."""
     return MarketRatesConfig.model_validate(_read_yaml(path))
+
+
+StorageBackend = Literal["local", "s3"]
+STORAGE_ENV = {"backend": "RISKPLATFORM_STORAGE_BACKEND", "bucket": "RISKPLATFORM_S3_BUCKET"}
+
+
+class S3Settings(_Strict):
+    bucket: str | None = None  # usually set by RISKPLATFORM_S3_BUCKET
+    prefix: str = Field(min_length=1)
+    region: str = Field(min_length=1)
+
+
+class StorageConfig(_Strict):
+    """Where results are published (config/storage.yaml; environment variables override it)."""
+
+    backend: StorageBackend
+    s3: S3Settings
+
+    @model_validator(mode="after")
+    def _check(self) -> "StorageConfig":
+        if self.backend == "s3" and not self.s3.bucket:
+            raise ValueError(f"backend is s3 but no bucket is set (set {STORAGE_ENV['bucket']})")
+        return self
+
+
+def load_storage_config(path: str | Path, env: dict[str, str] | None = None) -> StorageConfig:
+    """Read the storage YAML, apply the environment-variable overrides, then validate."""
+    env = dict(os.environ) if env is None else env
+    raw = _read_yaml(path)
+    if env.get(STORAGE_ENV["backend"]):
+        raw["backend"] = env[STORAGE_ENV["backend"]]
+    if env.get(STORAGE_ENV["bucket"]):
+        raw["s3"]["bucket"] = env[STORAGE_ENV["bucket"]]
+    return StorageConfig.model_validate(raw)
