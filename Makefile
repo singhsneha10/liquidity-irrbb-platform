@@ -2,7 +2,7 @@
 # comments (with the venv active).
 PYTHON ?= python
 
-.PHONY: run test lint check
+.PHONY: run test lint check docker-build docker-run
 
 run:  # python -m riskplatform.pipeline   (or: riskplatform-run)
 	$(PYTHON) -m riskplatform.pipeline
@@ -15,3 +15,9 @@ lint:  # ruff check . ; ruff format --check .
 	$(PYTHON) -m ruff format --check .
 
 check: lint test
+
+docker-build:  # docker build -t riskplatform .
+	docker build -t riskplatform .
+
+docker-run:  # docker run --rm riskplatform   (exit 0 clean, 1 stopped, 2 findings)
+	docker run --rm riskplatform

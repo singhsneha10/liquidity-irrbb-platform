@@ -34,3 +34,27 @@ jobs:
 
       - name: Test
         run: pytest
+
+  docker:
+    # Builds the container image and runs the whole pipeline inside it (Docker is available on
+    # GitHub's runners, so the image is proven on every push even where Docker is not installed).
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t riskplatform:ci .
+
+      - name: The container runs as a non-root user
+        run: test "$(docker run --rm --entrypoint id riskplatform:ci -u)" = "10001"
+
+      - name: Run the pipeline in the container
+        run: |
+          set +e
+          docker run --rm riskplatform:ci
+          code=$?
+          echo "pipeline exit code: $code"
+          # 0 = clean, 2 = findings (e.g. an IRRBB outlier): every stage ran. 1 = stopped/error.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then exit 1; fi
