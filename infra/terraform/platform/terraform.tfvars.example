@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars (ignored by Git) and fill in. Never commit terraform.tfvars.
+alert_email      = "you@example.com"
+image_tag        = "0.1.0"
+schedule_enabled = false # set to true after a successful manual run

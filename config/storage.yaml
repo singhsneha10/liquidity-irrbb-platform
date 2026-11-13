@@ -1,0 +1,17 @@
+# Where pipeline results are published, validated by riskplatform.config.StorageConfig.
+#
+# local: results stay under data/ only (the default: a fresh clone, the tests and CI never
+#        touch AWS).
+# s3:    after each run, results are also copied to S3 under their run id, and latest.json
+#        (the last good run) is written last. See src/riskplatform/storage.py.
+#
+# Environment variables override this file (that is how the cloud container is configured):
+#   RISKPLATFORM_STORAGE_BACKEND = local | s3
+#   RISKPLATFORM_S3_BUCKET       = the bucket Terraform created (never committed here)
+# AWS credentials are never in config: they come from the AWS profile or the container's role.
+
+backend: local
+s3:
+  bucket: null  # set by RISKPLATFORM_S3_BUCKET
+  prefix: riskplatform
+  region: eu-west-2  # London

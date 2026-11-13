@@ -1,0 +1,25 @@
+# Keep secrets, local data and development files out of the image (and the build context).
+.env
+.env.*
+venv/
+data/
+.git/
+.github/
+tests/
+docs/
+**/__pycache__/
+**/*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# Terraform working files and state (they can hold sensitive values)
+infra/**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+build/
+dist/
+.tmp_dagster_home_*/
+.dagster/

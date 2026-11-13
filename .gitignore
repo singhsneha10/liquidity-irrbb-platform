@@ -7,3 +7,15 @@ __pycache__/
 .coverage
 .env
 data/
+build/
+dist/
+.tmp_dagster_home_*/
+.dagster/
+# Terraform: working files, state and variable values (state and tfvars can hold sensitive
+# values). The provider lock file (.terraform.lock.hcl) IS committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log

@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars (ignored by Git) and fill in. Never commit terraform.tfvars.
+alert_email        = "you@example.com"
+monthly_budget_usd = 10

@@ -16,13 +16,19 @@ dependencies = [
   "pandera>=0.24",
   "duckdb>=2.0",
   "openpyxl>=3.1",
+  "boto3>=1.44",
 ]
 
 [project.scripts]
 riskplatform-run = "riskplatform.pipeline:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov", "ruff"]
+dev = ["pytest>=8", "pytest-cov", "ruff", "moto[s3]>=5.2", "dagster>=1.13"]
+# Dagster's web UI (dagster dev), for running and watching the pipeline locally.
+orchestration = ["dagster>=1.13", "dagster-webserver>=1.13"]
+
+[tool.dagster]
+module_name = "riskplatform.orchestration.definitions"
 
 [tool.setuptools.packages.find]
 where = ["src"]
