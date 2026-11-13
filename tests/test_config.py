@@ -1,5 +1,7 @@
+from datetime import UTC, date, datetime
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -13,6 +15,7 @@ from riskplatform.config import (
     load_generator_config,
     load_market_rates_config,
     load_quality_config,
+    parse_as_of,
 )
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
@@ -200,3 +203,50 @@ def test_config_rule_refuses_a_bad_file(model, path, break_it, message):
     break_it(raw)
     with pytest.raises(ValidationError, match=message):  # ... and the broken one is refused
         model.model_validate(raw)
+
+
+# --- As-of date: generate up to a run date -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("as_of", "n_days"),
+    [
+        (date(2026, 8, 3), 1),  # start_date itself (a Monday)
+        (date(2026, 8, 7), 5),  # the Friday
+        (date(2026, 8, 9), 5),  # a Sunday stops at the Friday before
+        (date(2026, 8, 10), 6),  # the next Monday
+    ],
+)
+def test_as_of_counts_business_days_from_the_start(cfg, as_of, n_days):
+    assert cfg.through(as_of).n_days == n_days
+
+
+def test_as_of_gives_exactly_the_dates_the_generator_makes(cfg):
+    """config.py counts with numpy, the generator lists dates with pandas: they must agree."""
+    for as_of in pd.date_range("2026-08-03", "2027-08-03", freq="D").date:
+        bank = cfg.through(as_of)
+        dates = pd.bdate_range(start=bank.start_date, periods=bank.n_days)
+        assert dates[-1].date() <= as_of < (dates[-1] + pd.offsets.BDay(1)).date(), as_of
+
+
+def test_as_of_changes_only_the_number_of_days(cfg):
+    later = cfg.through(date(2026, 11, 13))
+    assert later.n_days == 75
+    assert later.model_dump() == {**cfg.model_dump(), "n_days": 75}
+
+
+def test_as_of_before_the_start_is_refused(cfg):
+    with pytest.raises(ValueError, match="before start_date"):
+        cfg.through(date(2026, 7, 31))
+
+
+def test_loader_applies_the_as_of_date(cfg):
+    assert load_generator_config(CONFIG_DIR / "generator.yaml").n_days == cfg.n_days == 60
+    assert load_generator_config(CONFIG_DIR / "generator.yaml", date(2026, 8, 10)).n_days == 6
+
+
+def test_parse_as_of_reads_a_date_or_today():
+    assert parse_as_of("2026-11-13") == date(2026, 11, 13)
+    assert parse_as_of(" Today ") == datetime.now(UTC).date()
+    with pytest.raises(ValueError, match="YYYY-MM-DD or 'today'"):
+        parse_as_of("13/11/2026")

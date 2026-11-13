@@ -2,6 +2,10 @@
 
 The generator is deterministic: the same config always produces identical output.
 Run it with:  python -m riskplatform.ingestion.generate
+              python -m riskplatform.ingestion.generate --as-of 2026-11-13   (or --as-of today)
+
+With --as-of, it generates every business day from start_date up to that date instead of the
+config's n_days. A later date only adds days at the end: the earlier days are identical.
 """
 
 import argparse
@@ -12,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from riskplatform.config import GeneratorConfig, load_generator_config
+from riskplatform.config import AS_OF_HELP, GeneratorConfig, load_generator_config, parse_as_of
 from riskplatform.controls import write_control_totals
 from riskplatform.logs import setup_logging
 from riskplatform.schemas import (
@@ -384,10 +388,11 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic positions and market rates.")
     parser.add_argument("--config", type=Path, default=Path("config/generator.yaml"))
     parser.add_argument("--out", type=Path, default=Path("data/raw"))
+    parser.add_argument("--as-of", type=parse_as_of, help=AS_OF_HELP)
     args = parser.parse_args(argv)
 
     setup_logging()
-    cfg = load_generator_config(args.config)
+    cfg = load_generator_config(args.config, args.as_of)
     raw = generate(cfg)
     write_outputs(raw, args.out)
     logger.info(

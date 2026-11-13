@@ -1,5 +1,9 @@
 seed: 42
 start_date: 2026-08-03
+# Business days generated when no --as-of date is given (local runs, tests, CI, the Docker image
+# run by hand). With --as-of DATE (the daily AWS task: --as-of today), the bank covers every
+# business day from start_date up to DATE instead. Seed and start date stay fixed, so a later
+# date only adds days at the end: the earlier days are identical (tests/test_generate.py).
 n_days: 60
 
 currencies: [GBP, USD, EUR]

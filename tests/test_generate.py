@@ -389,3 +389,28 @@ def test_real_fx_missing_a_currency_is_an_error(cfg, tmp_path):
     curves = _write_curves(cfg, tmp_path / "curves.parquet")
     with pytest.raises(ValueError, match="no FX rates for USD"):
         generate(_real_cfg(cfg, curves, fx_file=fx_file))
+
+
+# --- Growing the series (runs with --as-of) --------------------------------------------------
+
+
+def test_adding_days_never_changes_earlier_days(cfg):
+    """Each scheduled run generates up to its own date, so the series grows by a day each run.
+    The days already published must stay exactly as they were: same seed and start date, more
+    days, and the first days are identical (not just close)."""
+    short = generate(cfg.model_validate({**cfg.model_dump(), "n_days": 20}))
+    long = generate(cfg.model_validate({**cfg.model_dump(), "n_days": 35}))
+    last_short_day = short.positions["date"].max()
+    for name in ("positions", "rates", "fx"):
+        before = getattr(short, name).reset_index(drop=True)
+        grown = getattr(long, name)
+        grown = grown[grown["date"] <= last_short_day].reset_index(drop=True)
+        pd.testing.assert_frame_equal(grown, before, check_exact=True, obj=name)
+    assert long.positions["date"].nunique() == 35
+
+
+def test_command_generates_up_to_the_as_of_date(tmp_path):
+    main(["--config", str(CONFIG_PATH), "--out", str(tmp_path), "--as-of", "2026-08-10"])
+    files = sorted(path.name for path in (tmp_path / "positions").glob("*.parquet"))
+    assert files[0] == "date=2026-08-03.parquet" and files[-1] == "date=2026-08-10.parquet"
+    assert len(files) == 6  # Mon 3 Aug to Mon 10 Aug: six business days

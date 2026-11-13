@@ -65,6 +65,32 @@ def test_iam_has_no_wildcard_actions_and_only_one_wildcard_resource():
             assert actions == ["ecr:GetAuthorizationToken"], actions
 
 
+def test_alerts_email_on_failures_but_not_on_findings():
+    """Exit 1 (stopped or error) and crash codes such as 137 (out of memory) email; 0 (clean)
+    and 2 (findings: they wait for the Phase 8 limit alerts) do not."""
+    alerts = (PLATFORM / "alerts.tf").read_text(encoding="utf-8")
+    rule = re.search(
+        r'resource "aws_cloudwatch_event_rule" "run_failed" \{(.*?)\n\}', alerts, re.DOTALL
+    )
+    assert rule, "the run_failed rule is missing"
+    silent = re.search(r'exitCode = \[\{ "anything-but" = \[([\d, ]+)\] \}\]', rule.group(1))
+    assert silent, "run_failed must match exit codes with anything-but [...]"
+    no_email = {int(code) for code in silent.group(1).split(",")}
+
+    def emails(exit_code: int) -> bool:  # what EventBridge's anything-but does
+        return exit_code not in no_email
+
+    assert not emails(0) and not emails(2)
+    assert emails(1) and emails(137) and emails(143)
+    assert 'stopCode   = ["TaskFailedToStart"]' in alerts  # no exit code at all: still alerts
+
+
+def test_the_daily_task_runs_up_to_its_own_date():
+    """The Fargate task passes --as-of today to the image's entry point (riskplatform-run)."""
+    ecs = (PLATFORM / "ecs.tf").read_text(encoding="utf-8")
+    assert re.search(r'command\s*=\s*\["--as-of", "today"\]', ecs)
+
+
 def test_images_are_immutable_and_scanned():
     ecr = (PLATFORM / "ecr.tf").read_text(encoding="utf-8")
     assert 'image_tag_mutability = "IMMUTABLE"' in ecr

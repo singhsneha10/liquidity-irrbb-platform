@@ -42,6 +42,10 @@ resource "aws_ecs_task_definition" "pipeline" {
     name      = "pipeline"
     image     = "${aws_ecr_repository.pipeline.repository_url}:${var.image_tag}"
     essential = true
+    # Arguments to the image's entry point (riskplatform-run): each run generates the business
+    # days up to its own date (UTC), so the series grows by a day per run and earlier days stay
+    # identical. Without it the image runs the config's fixed 60 days (as CI does).
+    command = ["--as-of", "today"]
     environment = [
       { name = "RISKPLATFORM_STORAGE_BACKEND", value = "s3" },
       { name = "RISKPLATFORM_S3_BUCKET", value = aws_s3_bucket.results.bucket },

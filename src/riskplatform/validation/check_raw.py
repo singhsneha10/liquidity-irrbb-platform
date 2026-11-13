@@ -6,6 +6,8 @@ They cover what row-by-row schema rules cannot: files, completeness, and links a
 and days. Each check is a query that returns the offending rows; no rows means it passed.
 
 Run with:  python -m riskplatform.validation.check_raw
+           python -m riskplatform.validation.check_raw --as-of 2026-11-13   (the date given to
+           generate, so the expected number of days matches)
 """
 
 import argparse
@@ -18,7 +20,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from riskplatform.config import GeneratorConfig, load_generator_config
+from riskplatform.config import AS_OF_HELP, GeneratorConfig, load_generator_config, parse_as_of
 from riskplatform.logs import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -286,10 +288,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check the generated raw files with DuckDB.")
     parser.add_argument("--config", type=Path, default=Path("config/generator.yaml"))
     parser.add_argument("--raw", type=Path, default=Path("data/raw"))
+    parser.add_argument("--as-of", type=parse_as_of, help=AS_OF_HELP + " (as given to generate)")
     args = parser.parse_args(argv)
 
     setup_logging()
-    results = run_checks(args.raw, load_generator_config(args.config))
+    results = run_checks(args.raw, load_generator_config(args.config, args.as_of))
     for result in results:
         if result.skipped:
             logger.info("SKIP  %s  (synthetic curves only)", result.name)

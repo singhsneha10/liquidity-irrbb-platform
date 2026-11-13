@@ -2,6 +2,11 @@
 
 Run with:  python -m riskplatform.pipeline          (or: riskplatform-run, or: make run)
            python -m riskplatform.pipeline --config config/generator_real.yaml
+           python -m riskplatform.pipeline --as-of today          (what the daily AWS task runs)
+
+--as-of DATE: generate every business day from start_date up to DATE (YYYY-MM-DD, or 'today'
+in UTC), so each scheduled run adds that day to the series; the earlier days stay identical.
+Without it, the config's n_days (60), so local runs, tests and CI are always the same.
 
 Each stage calls the same function as its own command, so the pipeline adds no calculation of
 its own. Stages run in order; a stage that stops ends the pipeline and later stages do not run.
@@ -27,11 +32,12 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
 
 from riskplatform.config import (
+    AS_OF_HELP,
     GeneratorConfig,
     IrrbbRules,
     LadderConfig,
@@ -42,6 +48,7 @@ from riskplatform.config import (
     load_ladder_config,
     load_quality_config,
     load_storage_config,
+    parse_as_of,
 )
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import load_irrbb_regimes, run_irrbb
@@ -96,11 +103,15 @@ class PipelineInputs:
 
 
 def load_inputs(
-    config: Path, quality: Path, liquidity_dir: Path, irrbb_dir: Path
+    config: Path, quality: Path, liquidity_dir: Path, irrbb_dir: Path, as_of: date | None = None
 ) -> PipelineInputs:
-    """Load and validate every config first, so a bad config fails before any data is written."""
+    """Load and validate every config first, so a bad config fails before any data is written.
+
+    With as_of, the bank covers every business day from start_date up to it (one day count for
+    every stage of the run); without it, the config's own n_days.
+    """
     return PipelineInputs(
-        generator=load_generator_config(config),
+        generator=load_generator_config(config, as_of),
         quality=load_quality_config(quality),
         liquidity=load_liquidity_regimes(liquidity_dir),
         ladder=load_ladder_config(liquidity_dir / "ladder.yaml"),
@@ -178,14 +189,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--irrbb", type=Path, default=Path("config/irrbb"))
     parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--storage", type=Path, default=Path("config/storage.yaml"))
+    parser.add_argument("--as-of", type=parse_as_of, help=AS_OF_HELP)
     args = parser.parse_args(argv)
 
     setup_logging()
-    inputs = load_inputs(args.config, args.quality, args.liquidity, args.irrbb)
+    inputs = load_inputs(args.config, args.quality, args.liquidity, args.irrbb, args.as_of)
     storage = load_storage_config(args.storage)  # checked before any data is written
     log_path = args.data / "logs" / f"pipeline-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.log"
     with log_to_file(log_path):
-        logger.info("Pipeline starting with %s; log file %s", args.config, log_path)
+        bank = inputs.generator
+        logger.info(
+            "Pipeline starting with %s (as of %s: %d business days from %s); log file %s",
+            args.config,
+            args.as_of or "config n_days",
+            bank.n_days,
+            bank.start_date,
+            log_path,
+        )
         try:
             result = run_pipeline(inputs, args.data)
         except Exception:

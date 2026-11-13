@@ -17,7 +17,9 @@ is no second copy of any logic. The rules match the pipeline:
   in the UI, but they do not block publishing. The numbers were produced; they need attention.
 - Only published_run talks to the network (S3), so only it retries.
 
-The schedule (weekdays 06:00 London) starts switched off; turn it on in the UI. In AWS the daily
+The schedule (weekdays 06:00 London) starts switched off; turn it on in the UI. Each scheduled
+run generates the business days up to its scheduled date (as --as-of does); runs started by hand
+use the config's n_days unless the settings' as_of is set. In AWS the daily
 run is a scheduled container running the same functions (Phase 7.4); running Dagster's own
 daemon and web server in AWS would cost money around the clock, so Dagster is the orchestration
 and monitoring layer locally and for demos.
@@ -28,7 +30,7 @@ from pathlib import Path
 
 import dagster as dg
 
-from riskplatform.config import load_storage_config
+from riskplatform.config import load_storage_config, parse_as_of
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import run_irrbb
 from riskplatform.metrics.run import run_metrics
@@ -50,11 +52,15 @@ class PipelineSettings(dg.ConfigurableResource):
     irrbb: str = "config/irrbb"
     storage: str = "config/storage.yaml"
     data: str = "data"
+    # Generate business days up to this date (YYYY-MM-DD or 'today'); empty: the config's
+    # n_days. The schedule sets it to each run's scheduled date (see daily_schedule).
+    as_of: str | None = None
 
     def inputs(self) -> PipelineInputs:
         """Every config, loaded and validated (a bad config fails before any data is written)."""
+        as_of = parse_as_of(self.as_of) if self.as_of else None
         return load_inputs(
-            Path(self.config), Path(self.quality), Path(self.liquidity), Path(self.irrbb)
+            Path(self.config), Path(self.quality), Path(self.liquidity), Path(self.irrbb), as_of
         )
 
     @property
@@ -213,12 +219,29 @@ ASSETS = [raw_data, raw_checks, validated_data, liquidity_metrics, irrbb_results
 
 daily_job = dg.define_asset_job("daily_risk_pipeline", selection=dg.AssetSelection.groups(GROUP))
 
-daily_schedule = dg.ScheduleDefinition(
+
+@dg.schedule(
+    name="daily_risk_pipeline_schedule",
     job=daily_job,
     cron_schedule="0 6 * * 1-5",  # 06:00 on weekdays
     execution_timezone="Europe/London",
     default_status=dg.DefaultScheduleStatus.STOPPED,  # switched on deliberately, in the UI
 )
+def daily_schedule(context: dg.ScheduleEvaluationContext) -> dg.RunRequest:
+    """Each run covers the business days up to the date it was scheduled for (not the date it
+    happens to start, so a late or caught-up run still covers its own day).
+
+    Run config replaces the resource's whole configuration, not one field: fields not given
+    fall back to PipelineSettings' class defaults. Definitions below uses exactly those defaults,
+    so only as_of changes. Give any other setting here too if Definitions ever stops using them.
+    """
+    day = context.scheduled_execution_time.date().isoformat()  # in execution_timezone
+    return dg.RunRequest(
+        run_key=day,  # one run per scheduled day, even if the schedule is evaluated twice
+        run_config={"resources": {"settings": {"config": {"as_of": day}}}},
+        tags={"as_of": day},
+    )
+
 
 defs = dg.Definitions(
     assets=ASSETS,

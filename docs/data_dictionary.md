@@ -16,6 +16,10 @@ totals:
 | FX rates | `data/raw/fx.parquet` | date and currency | 180 (60 days x 3 currencies) |
 | Control totals | `data/raw/control_totals.json` | file | rows (and balances for positions) per file, for reconciliation |
 
+The number of days is `n_days` (60) by default. With `--as-of DATE` (the daily AWS task runs
+`--as-of today`) it is every business day from `start_date` up to DATE, so each daily run adds
+a day; the earlier days are identical to what earlier runs published.
+
 The contract is enforced on generation: `generate()` validates both tables against
 `positions_schema` and `rates_schema` before anything is written. Both schemas are `strict`
 (no extra columns allowed) and `coerce` (values are converted to the declared type).

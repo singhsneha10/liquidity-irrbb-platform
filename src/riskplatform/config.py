@@ -3,10 +3,11 @@
 import itertools
 import math
 import os
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -183,6 +184,39 @@ class GeneratorConfig(_Strict):
             )
         return self
 
+    def through(self, as_of: date) -> "GeneratorConfig":
+        """The same bank, generated up to as_of: n_days becomes the number of business days
+        (Monday to Friday) from start_date to as_of, both included.
+
+        The seed and start date stay fixed, so a later as_of only adds days at the end; the days
+        before are identical (tests/test_generate.py proves it). A weekend as_of stops at the
+        Friday before it.
+        """
+        if as_of < self.start_date:
+            raise ValueError(f"as-of date {as_of} is before start_date {self.start_date}")
+        # busday_count counts [start, end): the day after as_of makes as_of itself count.
+        n_days = int(np.busday_count(self.start_date, as_of + timedelta(days=1)))
+        if n_days == 0:
+            raise ValueError(f"no business day from start_date {self.start_date} to {as_of}")
+        return self.model_validate({**self.model_dump(), "n_days": n_days})
+
+
+AS_OF_HELP = "generate business days up to this date (YYYY-MM-DD, or 'today' in UTC)"
+
+
+def parse_as_of(text: str) -> date:
+    """An as-of date from the command line: YYYY-MM-DD, or 'today' (today's date in UTC).
+
+    UTC, so no time-zone database is needed: the daily schedule runs at 06:00 London, which is
+    always the same calendar day in UTC.
+    """
+    if text.strip().lower() == "today":
+        return datetime.now(UTC).date()
+    try:
+        return date.fromisoformat(text.strip())
+    except ValueError:
+        raise ValueError(f"as-of date must be YYYY-MM-DD or 'today', got {text!r}") from None
+
 
 def _read_yaml(path: str | Path) -> dict:
     with open(path, encoding="utf-8") as handle:
@@ -209,9 +243,14 @@ def _read_generator_yaml(path: Path) -> dict:
     return _merge(_read_generator_yaml(path.parent / base_name), raw)
 
 
-def load_generator_config(path: str | Path) -> GeneratorConfig:
-    """Read a YAML file (optionally extending a base file) and return a GeneratorConfig."""
-    return GeneratorConfig.model_validate(_read_generator_yaml(Path(path)))
+def load_generator_config(path: str | Path, as_of: date | None = None) -> GeneratorConfig:
+    """Read a YAML file (optionally extending a base file) and return a GeneratorConfig.
+
+    With as_of, the bank is generated up to that date (GeneratorConfig.through); without it,
+    for the config's own n_days.
+    """
+    cfg = GeneratorConfig.model_validate(_read_generator_yaml(Path(path)))
+    return cfg if as_of is None else cfg.through(as_of)
 
 
 class OutlierThresholds(_Strict):

@@ -230,3 +230,13 @@ def test_command_line_reports_skipped_checks(raw_dir, tmp_path_factory, caplog):
     out = caplog.text
     assert "SKIP  curves_move_in_parallel" in out
     assert f"{len(CHECKS) - 2} passed, 0 failed, 2 skipped" in out
+
+
+def test_as_of_sets_the_expected_number_of_days(raw_dir, caplog):
+    """The 12-day bank runs Mon 3 Aug to Tue 18 Aug: that as-of date matches it, one day later
+    expects 13 days and the day-count check fails."""
+    args = ["--config", str(CONFIG_PATH), "--raw", str(raw_dir)]
+    assert main([*args, "--as-of", "2026-08-18"]) == 0
+    assert main([*args, "--as-of", "2026-08-19"]) == 1
+    failures = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert any(m.startswith("FAIL  day_count_matches_config") for m in failures)

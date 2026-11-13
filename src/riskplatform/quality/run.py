@@ -2,6 +2,7 @@
 
 Run with:  python -m riskplatform.quality.run
            python -m riskplatform.quality.run --config config/generator_real.yaml
+           python -m riskplatform.quality.run --as-of 2026-11-13   (the date given to generate)
 
 Stages (see docs/data_quality.md): read files and control totals -> row validation per file ->
 reconciliation -> file-level checks -> outliers -> publish. Any FileLevelError stops the run:
@@ -25,10 +26,12 @@ from pathlib import Path
 import pandas as pd
 
 from riskplatform.config import (
+    AS_OF_HELP,
     GeneratorConfig,
     QualityConfig,
     load_generator_config,
     load_quality_config,
+    parse_as_of,
 )
 from riskplatform.controls import CONTROL_FILE, read_control_totals
 from riskplatform.logs import setup_logging
@@ -207,12 +210,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quality", type=Path, default=Path("config/quality.yaml"))
     parser.add_argument("--raw", type=Path, default=Path("data/raw"))
     parser.add_argument("--out", type=Path, default=Path("data"))
+    parser.add_argument("--as-of", type=parse_as_of, help=AS_OF_HELP + " (as given to generate)")
     args = parser.parse_args(argv)
 
     setup_logging()
-    result = run_quality(
-        args.raw, args.out, load_generator_config(args.config), load_quality_config(args.quality)
-    )
+    cfg = load_generator_config(args.config, args.as_of)
+    result = run_quality(args.raw, args.out, cfg, load_quality_config(args.quality))
     rows = result.report["rows"]
     logger.info(
         "Run %s %s: %d rows quarantined; report at %s",

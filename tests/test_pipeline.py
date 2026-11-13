@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -128,3 +129,26 @@ def test_command_exit_code_matches_the_result(tmp_path):
     for stage in ALL_STAGES:
         assert f"Stage {stage}: " in text
     assert f"(exit code {code})" in text
+
+
+def test_as_of_runs_every_stage_on_the_days_up_to_that_date(tmp_path):
+    """Mon 3 Aug to Mon 10 Aug is six business days; every stage agrees on them."""
+    args = ["--config", str(CONFIG / "generator.yaml"), "--quality", str(CONFIG / "quality.yaml")]
+    args += ["--liquidity", str(CONFIG / "liquidity"), "--irrbb", str(CONFIG / "irrbb")]
+    code = main([*args, "--data", str(tmp_path / "data"), "--as-of", "2026-08-10"])
+    assert code in (0, 2)  # every stage ran (2: findings, e.g. the BANK_UK IRRBB outlier)
+
+    run_id = _json(tmp_path / "data" / "validated" / "_run.json")["run_id"]
+    assert len(list((tmp_path / "data" / "validated" / "positions").glob("*.parquet"))) == 6
+    assert _json(tmp_path / "data" / "metrics" / run_id / "summary.json")["dates"] == 6
+    assert _json(tmp_path / "data" / "irrbb" / run_id / "summary.json")["dates"] == 6
+    (log,) = (tmp_path / "data" / "logs").glob("pipeline-*.log")
+    assert "as of 2026-08-10: 6 business days from 2026-08-03" in log.read_text(encoding="utf-8")
+
+
+def test_inputs_use_the_as_of_date_for_every_stage():
+    inputs = load_inputs(
+        CONFIG / "generator.yaml", CONFIG / "quality.yaml", CONFIG / "liquidity", CONFIG / "irrbb",
+        as_of=date(2026, 11, 13),
+    )  # fmt: skip
+    assert inputs.generator.n_days == 75

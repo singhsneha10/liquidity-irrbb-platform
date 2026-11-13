@@ -3,6 +3,7 @@
 **Project:** Automated Liquidity & Interest Rate Risk Monitoring Platform
 **Goal:** A production-quality, end-to-end, deployed portfolio project that impresses senior
 people at banks such as JPMorgan (Risk Analyst roles). Business use comes later.
+**Last updated:** 2026-11-13 (Phase 7 code complete; deployment to AWS pending, run by the author).
 
 ## Working rules
 1. Think of the project as a whole; build step by step with the big picture in mind.
@@ -16,8 +17,8 @@ people at banks such as JPMorgan (Risk Analyst roles). Business use comes later.
 6. Run `pytest`, `ruff check .` and `ruff format --check .` after every change; a step is not
    done until all pass.
 7. Never commit secrets. `.env` is ignored and untracked; secrets live in environment variables.
-8. Use the latest stable tool versions. Commit, push and update this file at the end of the day
-   unless asked sooner; commit with explicit file lists.
+8. Use the latest stable tool versions. Update this file at the end of the day. **The author
+   commits and pushes; Claude never runs git commit or git push.**
 
 ## Big picture
 ```
@@ -26,7 +27,11 @@ market data (synthetic, or saved FRED / ECB / Bank of England files)
   -> quality run -> data/validated/ (+ quarantine, breaks report, audit folder per run)
   -> metrics run -> data/metrics/<run>/ (LCR, NSFR, ladder: Basel and UK PRA)
   -> IRRBB run -> data/irrbb/<run>/ (delta EVE, outlier test, delta NII, gap: Basel and UK PRA)
+  -> (backend s3) S3 under the run id; latest.json last -> query layer (DuckDB SQL views)
   -> reporting / dashboard (later)
+In AWS: EventBridge Scheduler -> ECS Fargate task (Docker image from ECR) -> S3 + CloudWatch
+Logs; a failed run (any exit code except 0 and 2) -> SNS email. Each run uses --as-of today.
+Locally: the same stages as Dagster assets (dagster dev).
 ```
 The data contracts (`src/riskplatform/schemas.py`) are the seam: real data can replace the
 synthetic data without changing calculation code. Calculations are verified separately from the
@@ -34,7 +39,7 @@ data: hand-worked examples written before the code, and proofs against published
 
 ## Target stack
 - Python 3.11+ (venv uses 3.12), pandas, numpy, pydantic v2, pandera, pytest, ruff
-- Storage and queries: Parquet, DuckDB (2.0); later S3
+- Storage and queries: Parquet, DuckDB (2.0), S3 with a DuckDB query layer (done)
 - Data quality layer with quarantine (done)
 - LCR, NSFR and IRRBB (NII and EVE, six Basel shocks), all done, as pure functions, with
   regulatory parameters in YAML; **Basel and UK PRA rulebooks side by side**
@@ -43,9 +48,10 @@ data: hand-worked examples written before the code, and proofs against published
 - Outputs: Tableau-ready extracts, Excel export, one-page summary report, optional AI commentary
   (all numbers from code, never from the model)
 - FastAPI backend; dashboard in **Tableau** (Alteryx optional for data prep)
-- Docker; GitHub Actions CI/CD
-- AWS (S3, ECS Fargate or Lambda, CloudWatch), Terraform or CDK, billing alarm set first
-- **Orchestration is required** (Dagster or Airflow)
+- Docker; GitHub Actions CI (lint, tests, image build and run, Terraform validate) (done)
+- AWS (S3, ECS Fargate, ECR, EventBridge Scheduler, CloudWatch, SNS) with Terraform, billing
+  alarm first (code done; not yet applied)
+- **Orchestration is required**: Dagster (done; locally and for demos)
 
 ## Design decisions so far
 - Config files (all validated by `src/riskplatform/config.py`, unknown keys rejected):
@@ -66,8 +72,16 @@ data: hand-worked examples written before the code, and proofs against published
   0/0 (nothing owed) meets it; summaries are strict JSON (NaN fails loudly).
 - Calculations run on numpy arrays inside each function (pandas overhead per group was the cost):
   metrics 27s -> 3s, IRRBB 6.5s -> 2.5s, results unchanged (checked against a saved snapshot).
-- Synthetic bank: 3 entities x 3 currencies x 14 product types (924 positions, 60 business days,
-  Mon-Fri). Assets = liabilities + 6% equity per entity and currency on day one. Foreign books
+- **As-of date (decided 2026-11-13):** `--as-of DATE` (or `today`, UTC) on `generate`,
+  `check_raw`, `quality.run` and the pipeline generates every business day from `start_date`
+  up to DATE (`GeneratorConfig.through`, `numpy.busday_count`); without it, `n_days` (60), so
+  local runs, tests and CI stay fixed. Seed and start date stay fixed: a later date only adds
+  days, and `tests/test_generate.py` proves the first days are bit-identical when the series
+  grows (planted series-dependent draws make it fail), so per-day random streams were not
+  needed. AWS task: `--as-of today`; Dagster schedule: its scheduled date (run key per day).
+  Run time grows with the series (75 days: about 15 s for the whole pipeline).
+- Synthetic bank: 3 entities x 3 currencies x 14 product types (924 positions; 60 business days
+  by default, or up to the as-of date; Mon-Fri, no holidays). Assets = liabilities + 6% equity per entity and currency on day one. Foreign books
   hold fewer reserves (5%) and government bonds (8%) than the 20% default foreign weight.
 - Hedges: pay-fixed interest rate swaps (5-20y, at market), notional off balance sheet. LCR 0%
   and NSFR 0% (notional is not a cash flow; charged on replacement cost); not in the ladder;
@@ -88,7 +102,36 @@ data: hand-worked examples written before the code, and proofs against published
   EUR and USD. UK differs in the post-shock floor (-100bp rising to 0% at 20y) and in offsetting
   gains at 50% across currencies. Non-maturity deposits: 70% core / 4y (stable), 50% / 3y (less
   stable), judgement within the caps.
-- CI (`.github/workflows/ci.yml`) runs ruff check, ruff format --check and pytest on every push.
+- CI (`.github/workflows/ci.yml`): ruff check, ruff format --check and pytest; builds the Docker
+  image and runs the pipeline in it (exit 0 or 2 passes); terraform fmt and validate.
+- Storage (`config/storage.yaml`, `riskplatform/storage.py`): `local` by default (tests and CI
+  never touch AWS); `s3` via `RISKPLATFORM_STORAGE_BACKEND` and `RISKPLATFORM_S3_BUCKET`. Every
+  run is uploaded under its run id (never overwritten), `runs/<run_id>.json` for every run, and
+  `latest.json` written last and only for a run that published validated data. No credentials
+  in code or config (AWS profile on a PC, the task's IAM role in AWS). Tested with moto.
+- Query layer (`riskplatform/query.py`): DuckDB views `lcr, nsfr, ladder, eve, risk, nii, gap,
+  run` over the latest good run only (local: `data/validated/_run.json`; S3: `latest.json`).
+  From S3 the run (about 1 MB) is downloaded once to `data/cache/`. Labelled choice over DuckDB
+  httpfs (extensions downloaded at run time) and Athena (Glue catalogue, cost per query; the
+  step up for querying many runs in place).
+- Docker: two-stage build on `python:3.12-slim-trixie`, non-root user (uid 10001), configs in
+  the image, `.dockerignore` keeps `.env`, data, tests and Terraform files out.
+- Orchestration: Dagster assets (`riskplatform/orchestration/definitions.py`) call the same
+  functions as the pipeline; stops raise a Failure, findings are WARN asset checks; only the S3
+  publish retries; schedule weekdays 06:00 London, off by default. In AWS the daily run is a
+  Fargate task (Dagster's daemon in AWS would cost money around the clock).
+- AWS (`infra/terraform/`, guide in `infra/README.md`; the author applies, Claude never does):
+  `billing/` (AWS Budget, 10 USD/month, emails at 50/80/100% actual and 100% forecast) applied
+  first; `platform/` (private encrypted versioned HTTPS-only S3 bucket, immutable scanned ECR,
+  Fargate in the default VPC with a public IP and outbound-HTTPS-only security group, so no
+  NAT gateway; least-privilege IAM with no wildcard actions; EventBridge schedule off by
+  default; SNS email on any exit code except 0 and 2, or a task that fails to start).
+  **Alerts are for failures only (decided 2026-11-13):** exit 1 (stopped or error) and crash
+  codes the program never sees (137 out of memory, 143 killed) email; findings (exit 2: a
+  breach or an IRRBB outlier) do not, they stay in the logs, S3 and latest.json and wait for
+  the Phase 8 limit alerts. Exactly "1" was rejected because an out-of-memory kill would then
+  be silent. BANK_UK was deliberately not resized. `tests/test_infra.py`
+  checks the safety rules and that Terraform agrees with `storage.yaml` and the Dagster schedule.
 
 ## Status
 | Phase | Status |
@@ -100,16 +143,20 @@ data: hand-worked examples written before the code, and proofs against published
 | 4. Liquidity metrics | Done: Basel + UK PRA rulebooks (sourced), worked example, LCR, NSFR, maturity ladder, metrics run, methodology doc |
 | 5. Interest rate risk (IRRBB) | Done: Basel + UK PRA rulebooks (sourced), worked example (reproduces SRP31.92), shocks + UK floor, repricing gap, delta EVE + aggregation + outlier test, delta NII, IRRBB run, methodology doc; swap hedges added to the generator |
 | 6. Testing and hardening | Done: one-command pipeline with exit codes (6.1), shared logging + run log files (6.2), edge cases: missing curve now a STOP, missing book a WARNING, LCR 0/0, empty folders (6.3), limits moved to config (6.4), metrics/IRRBB about 6x faster, slow tests shortened (6.5), 98% branch coverage and 16/16 planted formula bugs caught (6.6). 423 tests, about 1 minute. |
-| 7-10. Cloud + orchestration, alerts + Tableau, model validation, deploy | Not started |
+| 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). 490 tests, about 1.5 minutes. **Not yet applied to AWS** (no Terraform state on this PC; Terraform not installed): follow `infra/README.md`. |
+| 8-10. Alerts + Tableau, model validation, deploy | Not started |
 
 ## Next steps
-1. Phase 7 (cloud and orchestration): set the AWS billing alarm first; then storage (S3, or
-   DuckDB locally) and a scheduled daily run (Dagster or Airflow) calling the pipeline command.
-2. Generator realism, still open: hedge size per book (BANK_UK is an IRRBB outlier at 20.5% of
-   Tier 1 while the group is 14.2%; the pipeline exits 2 on every run because of it); calibrate
-   proportions to named public disclosures.
-3. Walk through the code in plain words (see "Walkthrough debt").
-4. Not covered by tests on purpose: the live HTTP fetch and `main()` in
+1. Deploy Phase 7 (the author runs these): install Terraform, apply `billing/` first, then
+   `platform/`, push the image, one manual run, then `schedule_enabled = true`.
+2. Decided before the schedule goes on (done, see design decisions): alerts on failures only,
+   findings wait for Phase 8; each run generates up to its own date (`--as-of today`).
+   BANK_UK stays an IRRBB outlier (20.5% of Tier 1; group 14.2%), so runs exit 2 without email.
+3. Phase 8: limit utilisation alerts (90% warning, 100% breach; this is where findings get
+   their alerts) and the dashboard, reading through `riskplatform.query`. The series now grows
+   by a day per run, so "what changed since yesterday" compares the last two dates.
+4. Walk through the code in plain words (see "Walkthrough debt").
+5. Not covered by tests on purpose: the live HTTP fetch and `main()` in
    `ingestion/market_rates.py` (needs the internet; the parsers are tested on sample replies).
 
 ## Assumptions to review before this goes on a resume
@@ -129,6 +176,12 @@ Added in Phase 6, worth a line-by-line pass: `pipeline.py` (stages, exit codes),
 `_factors` in `metrics/nsfr.py` (the searchsorted band lookup), `_slotted` in
 `irrbb/repricing.py`, the SQL of `curves_cover_every_currency` and `every_book_every_day` in
 `validation/check_raw.py`, and `_meets` in `metrics/run.py` (minimum tested on amounts).
+Added in Phase 7: `storage.py` (publish order, latest.json last), `query.py` (latest run, the
+download cache and its marker), `orchestration/definitions.py`, the Dockerfile, and
+`infra/terraform/platform/iam.tf` and `alerts.tf` (the event patterns, `anything-but [0, 2]`),
+`GeneratorConfig.through` and `parse_as_of` in `config.py` (business-day count, UTC today), and
+`daily_schedule` in `orchestration/definitions.py` (scheduled date, run key; run config
+replaces the whole resource config).
 
 ## How to run
 First time on a new machine:
@@ -137,6 +190,8 @@ py -3.12 -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```
+Run `pip install -e ".[dev]"` again after pulling a change to `pyproject.toml` (new packages such
+as dagster, boto3 or moto); otherwise the tests that import them cannot even load.
 Checks:
 ```
 pytest
@@ -146,9 +201,22 @@ ruff format --check .
 Whole pipeline in one command (synthetic, offline; exit 0 clean, 1 stopped, 2 findings):
 ```
 riskplatform-run                                 # or: python -m riskplatform.pipeline / make run
+riskplatform-run --as-of today                   # every business day up to today (as in AWS)
 $env:RISKPLATFORM_LOG_LEVEL = "DEBUG"            # optional: more detail (default INFO)
 ```
 Coverage report: `pytest --cov=riskplatform --cov-branch --cov-report=term-missing`
+
+Query the latest good run with SQL (local data/, or `--source s3` with RISKPLATFORM_S3_BUCKET):
+```
+python -m riskplatform.query --tables
+python -m riskplatform.query "SELECT regime, entity, lcr FROM lcr WHERE level = 'entity'"
+```
+Orchestration and cloud:
+```
+pip install -e ".[orchestration]"; dagster dev     # Dagster UI with the assets and schedule
+make docker-build; make docker-run                 # or: docker build -t riskplatform .
+# AWS: infra/README.md (billing alarm first; the author applies)
+```
 
 Stage by stage (the same functions the pipeline calls):
 ```
@@ -159,6 +227,8 @@ python -m riskplatform.metrics.run               # data/metrics/<run>/ (Basel an
 python -m riskplatform.irrbb.run                 # data/irrbb/<run>/ (exit 1 if an outlier)
 python -m riskplatform.quality.demo              # error-injection demo (data/demo/)
 ```
+With an as-of date, give the same `--as-of` to `generate`, `check_raw` and `quality.run` (they
+check the number of days); `metrics.run` and `irrbb.run` read what the quality run published.
 Real rates (needs internet once):
 ```
 python -m riskplatform.ingestion.market_rates    # saves data/external/ (curves + FX)
@@ -170,4 +240,5 @@ python -m riskplatform.irrbb.run --config config/generator_real.yaml
 All data is written under `data/` (ignored by Git).
 
 ## Resuming in a new chat
-Paste this file and say which step you are on, for example "Phase 6, step 6.1".
+Paste this file (or ask Claude to read it and the code base) and say which step you are on, for
+example "Phase 7: deploying" or "Phase 8, step 8.1". Claude never commits or pushes.

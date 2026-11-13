@@ -1,6 +1,7 @@
 """Dagster orchestration: definitions, lineage, a full run, stops block what follows, publishing."""
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import boto3
@@ -9,7 +10,7 @@ import pytest
 from moto import mock_aws
 
 from riskplatform.orchestration import definitions
-from riskplatform.orchestration.definitions import ASSETS, PipelineSettings, defs
+from riskplatform.orchestration.definitions import ASSETS, PipelineSettings, daily_schedule, defs
 
 ROOT = Path(__file__).resolve().parents[1]
 ORDER = [
@@ -131,3 +132,33 @@ def test_published_run_uploads_to_s3_when_the_backend_is_s3(settings, monkeypatc
     published = result.asset_materializations_for_node("published_run")[0]
     assert latest["run_id"] == published.metadata["run_id"].value
     assert published.metadata["backend"].value == "s3"
+
+
+def test_schedule_runs_up_to_its_scheduled_date():
+    """A late or caught-up run still covers its own day: the date comes from the schedule."""
+    friday = datetime(2026, 11, 13, 6, 0, tzinfo=UTC)
+    request = daily_schedule(dg.build_schedule_context(scheduled_execution_time=friday))
+    assert request.run_key == "2026-11-13"  # one run per scheduled day
+    assert request.run_config == {"resources": {"settings": {"config": {"as_of": "2026-11-13"}}}}
+    assert request.tags["as_of"] == "2026-11-13"
+
+
+def test_as_of_setting_sets_the_days_of_every_asset(settings):
+    """Mon 3 Aug to Wed 5 Aug: three business days, from raw data to IRRBB."""
+    # A new resource, not model_copy: Dagster keeps a resource's config apart from the copy.
+    fields = {
+        name: getattr(settings, name)
+        for name in ("quality", "liquidity", "irrbb", "storage", "data")
+    }
+    full = PipelineSettings(
+        **fields, config=str(ROOT / "config" / "generator.yaml"), as_of="2026-08-05"
+    )
+    result = _run(full)
+    assert result.success
+    data = Path(full.data)
+    run_id = json.loads((data / "validated" / "_run.json").read_text())["run_id"]
+    raw = result.asset_materializations_for_node("raw_data")[0]
+    assert raw.metadata["days"].value == 3
+    assert len(list((data / "validated" / "positions").glob("*.parquet"))) == 3
+    irrbb = json.loads((data / "irrbb" / run_id / "summary.json").read_text())
+    assert irrbb["dates"] == 3

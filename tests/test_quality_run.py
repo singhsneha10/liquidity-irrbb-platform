@@ -283,3 +283,12 @@ def test_missing_fx_file_stops_the_run(raw_dir, small_cfg, quality_cfg):
     result = _run(raw_dir, small_cfg, quality_cfg)
     assert result.status == "stopped"
     assert any("fx.parquet missing" in reason for reason in result.report["stop_reasons"])
+
+
+def test_as_of_sets_the_expected_number_of_days(raw_dir, tmp_path):
+    """The 5-day bank runs Mon 3 Aug to Fri 7 Aug: that as-of date publishes; the next business
+    day expects 6 days, so the run stops on the missing day."""
+    args = ["--config", str(ROOT / "config" / "generator.yaml"), "--quality", str(QUALITY_PATH)]
+    args += ["--raw", str(raw_dir), "--out", str(tmp_path / "out")]
+    assert main([*args, "--as-of", "2026-08-07"]) == 0
+    assert main([*args, "--as-of", "2026-08-10"]) == 1

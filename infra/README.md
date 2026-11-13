@@ -2,14 +2,18 @@
 
 The pipeline runs in AWS as a **scheduled Fargate task**: the Docker image from ECR, started on
 weekday mornings by EventBridge Scheduler. It publishes results to a private S3 bucket and logs
-to CloudWatch. You get an email if a run does not end cleanly.
+to CloudWatch. You get an email if a run fails (not for findings, which wait for Phase 8).
+
+Each run generates the synthetic bank's business days from its start date (3 August 2026) up to
+the run's own date (`--as-of today`, UTC), so every run adds one day to the series and the days
+already published stay identical. The first line of each run's log says how many days it covered.
 
 ```
 EventBridge Scheduler (weekdays 06:00 London, off until you turn it on)
-   -> ECS Fargate task (the riskplatform image from ECR, riskplatform-run)
+   -> ECS Fargate task (the riskplatform image from ECR, riskplatform-run --as-of today)
         -> S3: s3://<bucket>/riskplatform/... (runs under their id, latest.json last)
         -> CloudWatch Logs: /riskplatform/pipeline
-   -> exit code 1 or 2, or the task fails to start -> SNS email
+   -> any exit code except 0 (clean) and 2 (findings), or the task fails to start -> SNS email
 AWS Budget -> email at 50%, 80%, 100% of actual spend and 100% of forecast
 ```
 
@@ -101,8 +105,20 @@ aws s3 cp "s3://$bucket/riskplatform/latest.json" -  # the run that just publish
 Remove-Item network.json
 ```
 
-The synthetic bank's BANK_UK is an IRRBB outlier, so expect **exit code 2** (findings) and an
-alert email. That is the pipeline working as designed.
+Ask the published results questions in SQL (downloads the latest good run once, about 1 MB, into
+`data/cache/`; see `src/riskplatform/query.py`):
+
+```
+$env:RISKPLATFORM_S3_BUCKET = $bucket
+python -m riskplatform.query --source s3 --tables
+python -m riskplatform.query --source s3 "SELECT regime, entity, eve_risk / tier1 AS share, outlier FROM risk WHERE level = 'entity' AND date = (SELECT max(date) FROM risk)"
+```
+
+The synthetic bank's BANK_UK is an IRRBB outlier, so expect **exit code 2** (findings) and **no**
+email: findings stay in the log, in S3 and in `latest.json`, and become limit alerts in Phase 8.
+Emails are for failures only: exit code 1 (a check stopped the run, or an error) or a crash such
+as 137 (out of memory). To see the alert work, make a run fail on purpose, for example by
+running a task whose image tag does not exist (it fails to start).
 
 ## 5. Turn the schedule on
 
