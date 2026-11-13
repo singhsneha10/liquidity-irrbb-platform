@@ -58,3 +58,29 @@ jobs:
           echo "pipeline exit code: $code"
           # 0 = clean, 2 = findings (e.g. an IRRBB outlier): every stage ran. 1 = stopped/error.
           if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then exit 1; fi
+
+  terraform:
+    # Formats and validates the AWS infrastructure code (no AWS credentials needed).
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.17.2"
+
+      - name: Format check
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: Validate the billing alarm
+        run: |
+          terraform -chdir=infra/terraform/billing init -backend=false -input=false
+          terraform -chdir=infra/terraform/billing validate
+
+      - name: Validate the platform
+        run: |
+          terraform -chdir=infra/terraform/platform init -backend=false -input=false
+          terraform -chdir=infra/terraform/platform validate
