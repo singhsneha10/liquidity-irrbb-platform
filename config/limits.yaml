@@ -1,0 +1,38 @@
+# Internal limits (risk appetite), validated by riskplatform.config.LimitsConfig.
+#
+# These are the bank's OWN limits, set by judgement above or within the regulatory requirements;
+# they are not regulatory parameters (those are in config/liquidity/ and config/irrbb/). Change
+# them here: nothing in the code depends on the values.
+#
+# Utilisation (how much of a limit is used, as a fraction):
+#   floor (the metric must stay at or above the limit, e.g. LCR >= 110%):  limit / actual
+#   cap   (the metric must stay at or below the limit, e.g. EVE loss <= 15% of Tier 1): actual / limit
+# A floor metric with nothing owed (LCR or NSFR 0/0, or an infinite ratio) uses 0% of its limit.
+# Status: ok below `warning`; warning from `warning`; breach from `breach` (both inclusive).
+
+thresholds:
+  warning: 0.90  # 90% of the limit used: early warning
+  breach: 1.00   # 100%: the limit is reached or crossed
+
+# Levels the limits apply to. Per-currency results (entity_currency) are monitoring only, as
+# for the regulatory minimums (see riskplatform.metrics.run).
+levels: [entity, group]
+
+limits:
+  lcr:
+    kind: floor
+    value: 1.10
+    source: lcr          # the lcr column of the LCR table
+    why: "Management buffer of 10 percentage points above the 100% regulatory minimum"
+  nsfr:
+    kind: floor
+    value: 1.05
+    source: nsfr         # the nsfr column of the NSFR table
+    why: "Management buffer of 5 percentage points above the 100% regulatory minimum"
+  eve_tier1:
+    kind: cap
+    value: 0.15
+    source: eve_tier1    # worst aggregated EVE loss / Tier 1, from the IRRBB risk table
+    # Equal to the outlier threshold, so a breach and an IRRBB outlier agree, except at exactly
+    # 15.0%: the limit is breached when reached (>=), the outlier test needs a loss above it (>).
+    why: "Equal to the supervisory outlier test (Basel SRP31.82; UK SS31/15): a loss of 15% of Tier 1 or more is a breach"

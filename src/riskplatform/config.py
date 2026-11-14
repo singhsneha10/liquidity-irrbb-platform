@@ -666,3 +666,43 @@ def load_storage_config(path: str | Path, env: dict[str, str] | None = None) -> 
     if env.get(STORAGE_ENV["bucket"]):
         raw["s3"]["bucket"] = env[STORAGE_ENV["bucket"]]
     return StorageConfig.model_validate(raw)
+
+
+LimitKind = Literal["floor", "cap"]  # floor: stay at or above the limit; cap: at or below it
+LimitSource = Literal["lcr", "nsfr", "eve_tier1"]  # what riskplatform.limits can measure
+LimitLevel = Literal["entity", "group"]  # per-currency results are monitoring only
+
+
+class LimitThresholds(_Strict):
+    """Utilisation (a fraction of the limit) at which a result becomes a warning or a breach."""
+
+    warning: float = Field(gt=0)
+    breach: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "LimitThresholds":
+        if self.warning > self.breach:
+            raise ValueError(f"warning ({self.warning}) must not be above breach ({self.breach})")
+        return self
+
+
+class Limit(_Strict):
+    """One internal limit (risk appetite, not a regulatory parameter)."""
+
+    kind: LimitKind
+    value: float = Field(gt=0)
+    source: LimitSource
+    why: str = Field(min_length=1)  # the reason for the value: every limit is a labelled choice
+
+
+class LimitsConfig(_Strict):
+    """Internal limits and alert thresholds (config/limits.yaml)."""
+
+    thresholds: LimitThresholds
+    levels: list[LimitLevel] = Field(min_length=1)
+    limits: dict[str, Limit] = Field(min_length=1)
+
+
+def load_limits_config(path: str | Path) -> LimitsConfig:
+    """Read a YAML file and return a validated LimitsConfig."""
+    return LimitsConfig.model_validate(_read_yaml(path))
