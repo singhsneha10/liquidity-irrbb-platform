@@ -1,5 +1,6 @@
 """Internal limits: utilisation by hand, status boundaries, agreement with the regulatory tests."""
 
+import json
 import math
 from pathlib import Path
 
@@ -18,12 +19,16 @@ from riskplatform.ingestion.generate import generate
 from riskplatform.irrbb.run import compute_irrbb, load_irrbb_regimes
 from riskplatform.limits import (
     LIMIT_COLUMNS,
+    LimitsInputError,
+    describe_alert,
     eve_share_of_tier1,
     latest_alerts,
     measure_limits,
+    run_limits,
     status,
     utilisation,
 )
+from riskplatform.limits import main as limits_main
 from riskplatform.metrics.run import compute_metrics, load_liquidity_regimes
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,7 +101,7 @@ def test_every_limit_for_entities_and_the_group_only():
 
 
 def test_values_worked_by_hand():
-    table = measure_limits(*_tables(), LIMITS).set_index(["level", "limit"])
+    table = measure_limits(*_tables(), LIMITS).set_index(["level", "limit_name"])
     entity = table.loc["entity"]
     # LCR 125% vs a 110% floor: 1.10 / 1.25 = 88% used, ok (below the 90% warning)
     assert entity.loc["lcr", "utilisation"] == pytest.approx(0.88)
@@ -117,7 +122,7 @@ def test_a_stricter_limit_in_config_changes_the_result():
 
     def lcr_statuses(limits):
         table = measure_limits(*_tables(), limits)
-        return table.loc[table["limit"] == "lcr", "status"].unique().tolist()
+        return table.loc[table["limit_name"] == "lcr", "status"].unique().tolist()
 
     assert lcr_statuses(LIMITS) == ["ok"]  # 1.10 / 1.25 = 88%
     assert lcr_statuses(stricter) == ["warning"]  # 1.15 / 1.25 = 92%
@@ -152,7 +157,7 @@ def generated_limits(cfg):
 
 def test_eve_breach_agrees_with_the_irrbb_outlier_test(generated_limits):
     _, irrbb, table = generated_limits
-    eve = table[table["limit"] == "eve_tier1"].merge(
+    eve = table[table["limit_name"] == "eve_tier1"].merge(
         irrbb.risk[["date", "level", "entity", "regime", "outlier"]],
         on=["date", "level", "entity", "regime"],
     )
@@ -196,3 +201,59 @@ def _broken(**changes) -> dict:
 def test_config_refuses_a_bad_limits_file(raw, message):
     with pytest.raises(ValidationError, match=message):
         LimitsConfig.model_validate(raw)
+
+
+# --- The limits run ------------------------------------------------------------------------------
+
+
+def _write_run(data_dir: Path, run_id: str, **values) -> None:
+    """Results laid out as the pipeline writes them, for two dates."""
+    old = _tables(day=DAY)
+    new = _tables(day=NEXT, **values)
+    paths = {"lcr": "metrics", "nsfr": "metrics", "risk": "irrbb"}
+    for (name, stage), first, second in zip(paths.items(), old, new, strict=True):
+        folder = data_dir / stage / run_id
+        folder.mkdir(parents=True, exist_ok=True)
+        pd.concat([first, second], ignore_index=True).to_parquet(folder / f"{name}.parquet")
+    (data_dir / "validated").mkdir(exist_ok=True)
+    manifest = {"run_id": run_id}
+    (data_dir / "validated" / "_run.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_run_writes_every_date_and_summarises_the_latest(tmp_path):
+    _write_run(tmp_path, "r1", lcr_value=0.0)  # latest LCR 0 with outflows: infinite use
+    run = run_limits(tmp_path, "r1", LIMITS)
+    stored = pd.read_parquet(tmp_path / "limits" / "r1" / "limits.parquet")
+    assert len(stored) == len(run.table) == 2 * 2 * len(LIMITS.limits)  # 2 dates x 2 levels
+    summary = json.loads((tmp_path / "limits" / "r1" / "summary.json").read_text())
+    assert summary["source_run_id"] == "r1" and summary["as_of"] == "2026-08-04"
+    assert sum(summary["latest_status"].values()) == 2 * len(LIMITS.limits)  # latest date only
+    lcr = [a for a in summary["alerts"] if a["limit"] == "lcr"]
+    assert {a["status"] for a in lcr} == {"breach"}
+    assert all(a["utilisation"] is None and a["actual"] == 0.0 for a in lcr)  # inf -> null
+
+
+def test_run_without_results_is_a_clear_error(tmp_path):
+    with pytest.raises(LimitsInputError, match="no results to measure"):
+        run_limits(tmp_path, "missing", LIMITS)
+
+
+def test_alert_line_reads_well():
+    group = {"status": "warning", "entity": None, "regime": "pra", "limit": "eve_tier1",
+             "utilisation": 0.962, "actual": 0.1443, "limit_value": 0.15, "kind": "cap",
+             "date": "2026-11-13"}  # fmt: skip
+    assert describe_alert(group) == (
+        "WARNING GROUP (pra) eve_tier1: 96% used (actual 14.4%, limit 15.0% cap) on 2026-11-13"
+    )
+    empty = {**group, "status": "breach", "entity": "BANK_UK", "limit": "lcr",
+             "utilisation": None, "actual": 0.0, "limit_value": 1.1, "kind": "floor"}  # fmt: skip
+    assert describe_alert(empty).startswith("BREACH BANK_UK (pra) lcr: inf used (actual 0.0%")
+
+
+def test_command_exits_1_on_alerts_and_0_when_all_is_ok(tmp_path):
+    args = ["--limits", str(CONFIG / "limits.yaml"), "--data", str(tmp_path)]
+    assert limits_main(args) == 1  # nothing published yet
+    _write_run(tmp_path, "r1")  # EVE 20% of Tier 1: a breach
+    assert limits_main(args) == 1
+    _write_run(tmp_path, "r2", eve_risk=10.0)  # everything ok on the latest date
+    assert limits_main(args) == 0

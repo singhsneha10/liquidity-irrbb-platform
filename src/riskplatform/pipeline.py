@@ -1,4 +1,5 @@
-"""The whole daily pipeline in one command: generate -> raw checks -> quality -> metrics -> IRRBB.
+"""The whole daily pipeline in one command: generate -> raw checks -> quality -> metrics ->
+IRRBB -> limits.
 
 Run with:  python -m riskplatform.pipeline          (or: riskplatform-run, or: make run)
            python -m riskplatform.pipeline --config config/generator_real.yaml
@@ -14,13 +15,15 @@ data/validated/ then keeps the last good data (the quality run guarantees that),
 IRRBB are never calculated on data that failed its checks.
 
 Exit codes, so a scheduler can tell a broken run from a run that found something:
-  0  every stage ran; no liquidity minimum breached and no IRRBB outlier
+  0  every stage ran; no liquidity minimum breached, no IRRBB outlier, every internal limit ok
   1  the pipeline stopped: a raw check failed, the quality run stopped, or a stage raised an
      error (Python exits with 1 on an unhandled error too)
-  2  every stage ran, but a liquidity minimum was breached or an entity or the group is an
-     IRRBB outlier. The numbers were produced; they need attention, not a rerun.
+  2  every stage ran, but a liquidity minimum was breached, an entity or the group is an
+     IRRBB outlier, or an internal limit (config/limits.yaml) is at warning or breach on the
+     latest date. The numbers were produced; they need attention, not a rerun.
 
 All outputs go under --data (default data/): raw/, validated/, quality_runs/, metrics/, irrbb/,
+limits/,
 and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
 With backend s3 in --storage (config/storage.yaml, or RISKPLATFORM_STORAGE_BACKEND=s3), the
 run's outputs are then also copied to S3 under its run id (riskplatform.storage).
@@ -41,17 +44,20 @@ from riskplatform.config import (
     GeneratorConfig,
     IrrbbRules,
     LadderConfig,
+    LimitsConfig,
     LiquidityRules,
     QualityConfig,
     StorageConfig,
     load_generator_config,
     load_ladder_config,
+    load_limits_config,
     load_quality_config,
     load_storage_config,
     parse_as_of,
 )
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import load_irrbb_regimes, run_irrbb
+from riskplatform.limits import describe_alert, run_limits
 from riskplatform.logs import log_to_file, setup_logging
 from riskplatform.metrics.run import load_liquidity_regimes, run_metrics
 from riskplatform.quality.run import run_quality
@@ -100,10 +106,16 @@ class PipelineInputs:
     liquidity: dict[str, LiquidityRules]
     ladder: LadderConfig
     irrbb: dict[str, IrrbbRules]
+    limits: LimitsConfig
 
 
 def load_inputs(
-    config: Path, quality: Path, liquidity_dir: Path, irrbb_dir: Path, as_of: date | None = None
+    config: Path,
+    quality: Path,
+    liquidity_dir: Path,
+    irrbb_dir: Path,
+    as_of: date | None = None,
+    limits_path: Path = Path("config/limits.yaml"),
 ) -> PipelineInputs:
     """Load and validate every config first, so a bad config fails before any data is written.
 
@@ -116,6 +128,7 @@ def load_inputs(
         liquidity=load_liquidity_regimes(liquidity_dir),
         ladder=load_ladder_config(liquidity_dir / "ladder.yaml"),
         irrbb=load_irrbb_regimes(irrbb_dir),
+        limits=load_limits_config(limits_path),
     )
 
 
@@ -160,12 +173,23 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
         flagged = run.summary["outliers"]
         return ("findings" if flagged else "ok"), f"{len(flagged)} outlier results; {run.out_dir}"
 
+    def limits_step() -> tuple[StageStatus, str]:
+        run = run_limits(data_dir, seen["run_id"], inputs.limits)
+        for alert in run.alerts:
+            logger.warning("Limit %s", describe_alert(alert))
+        counts = run.summary["latest_status"]
+        detail = (
+            f"{counts['breach']} breaches, {counts['warning']} warnings on {run.summary['as_of']}"
+        )
+        return ("findings" if run.alerts else "ok"), f"{detail}; {run.out_dir}"
+
     steps: list[tuple[str, Step]] = [
         ("generate", generate_step),
         ("raw_checks", raw_checks_step),
         ("quality", quality_step),
         ("metrics", metrics_step),
         ("irrbb", irrbb_step),
+        ("limits", limits_step),
     ]
     stages: list[StageResult] = []
     for name, step in steps:
@@ -187,13 +211,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quality", type=Path, default=Path("config/quality.yaml"))
     parser.add_argument("--liquidity", type=Path, default=Path("config/liquidity"))
     parser.add_argument("--irrbb", type=Path, default=Path("config/irrbb"))
+    parser.add_argument("--limits", type=Path, default=Path("config/limits.yaml"))
     parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--storage", type=Path, default=Path("config/storage.yaml"))
     parser.add_argument("--as-of", type=parse_as_of, help=AS_OF_HELP)
     args = parser.parse_args(argv)
 
     setup_logging()
-    inputs = load_inputs(args.config, args.quality, args.liquidity, args.irrbb, args.as_of)
+    inputs = load_inputs(
+        args.config, args.quality, args.liquidity, args.irrbb, args.as_of, args.limits
+    )
     storage = load_storage_config(args.storage)  # checked before any data is written
     log_path = args.data / "logs" / f"pipeline-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.log"
     with log_to_file(log_path):

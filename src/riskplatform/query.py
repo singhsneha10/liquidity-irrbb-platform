@@ -12,8 +12,9 @@ promises:
 Each result table is a DuckDB view over that run's Parquet files, plus `run` (which run it is):
     lcr, nsfr, ladder           from metrics/<run_id>/
     eve, risk, nii, gap         from irrbb/<run_id>/
+    limits                      from limits/<run_id>/ (utilisation and status of each limit)
 
-From S3, the run's metrics and IRRBB files (about 1 MB) are first downloaded into --cache
+From S3, the run's metrics, IRRBB and limits files (about 1 MB) are first downloaded into --cache
 (default data/cache/, same layout as data/), once per run, and queried on local disk. Labelled
 choice: DuckDB can read S3 directly, but only through extensions it downloads at run time; Athena
 queries S3 in place, but needs a Glue catalogue and charges per query. Downloading one small run
@@ -48,6 +49,7 @@ TABLES = {  # view name -> the stage folder its file is in
     "risk": "irrbb",
     "nii": "irrbb",
     "gap": "irrbb",
+    "limits": "limits",
 }
 STAGES = sorted(set(TABLES.values()))
 COMPLETE = ".complete"  # cache_dir/.complete/<run_id> exists once a run is fully downloaded

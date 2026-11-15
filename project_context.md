@@ -3,7 +3,9 @@
 **Project:** Automated Liquidity & Interest Rate Risk Monitoring Platform
 **Goal:** A production-quality, end-to-end, deployed portfolio project that impresses senior
 people at banks such as JPMorgan (Risk Analyst roles). Business use comes later.
-**Last updated:** 2026-11-13 (Phase 7 code complete; deployment to AWS pending, run by the author).
+**Last updated:** 2026-11-15. Phase 7 code complete (AWS deployment pending, run by the author).
+Phase 8 in progress: 8.1 limits committed (`207afaa`); 8.2 limits stage done and tested
+(525 tests) but **not committed when this was written**; next is 8.3 (limit alert emails).
 
 ## Working rules
 1. Think of the project as a whole; build step by step with the big picture in mind.
@@ -27,8 +29,9 @@ market data (synthetic, or saved FRED / ECB / Bank of England files)
   -> quality run -> data/validated/ (+ quarantine, breaks report, audit folder per run)
   -> metrics run -> data/metrics/<run>/ (LCR, NSFR, ladder: Basel and UK PRA)
   -> IRRBB run -> data/irrbb/<run>/ (delta EVE, outlier test, delta NII, gap: Basel and UK PRA)
+  -> limits -> data/limits/<run>/ (utilisation and ok/warning/breach of config/limits.yaml)
   -> (backend s3) S3 under the run id; latest.json last -> query layer (DuckDB SQL views)
-  -> reporting / dashboard (later)
+  -> (Phase 8, to come) limit alert email via SNS; Streamlit dashboard + Tableau extracts; PDF
 In AWS: EventBridge Scheduler -> ECS Fargate task (Docker image from ECR) -> S3 + CloudWatch
 Logs; a failed run (any exit code except 0 and 2) -> SNS email. Each run uses --as-of today.
 Locally: the same stages as Dagster assets (dagster dev).
@@ -47,7 +50,8 @@ data: hand-worked examples written before the code, and proofs against published
 - UK entity limits and early-warning indicators; "what changed since yesterday" analysis
 - Outputs: Tableau-ready extracts, Excel export, one-page summary report, optional AI commentary
   (all numbers from code, never from the model)
-- FastAPI backend; dashboard in **Tableau** (Alteryx optional for data prep)
+- Dashboard: **Streamlit** (live, deployable) plus **Tableau-ready extracts** (decided in Phase 8);
+  FastAPI backend optional later (Alteryx optional for data prep)
 - Docker; GitHub Actions CI (lint, tests, image build and run, Terraform validate) (done)
 - AWS (S3, ECS Fargate, ECR, EventBridge Scheduler, CloudWatch, SNS) with Terraform, billing
   alarm first (code done; not yet applied)
@@ -62,8 +66,9 @@ data: hand-worked examples written before the code, and proofs against published
   `config/irrbb/basel.yaml`, `pra.yaml`. No limits in code: rate sanity bounds (`rate_bounds`,
   -5% to 25%) are in `generator.yaml` and `market_rates.yaml` (a test keeps them equal).
 - One command (`riskplatform-run`, `python -m riskplatform.pipeline`, or `make run`) runs
-  generate -> raw checks -> quality -> metrics -> IRRBB and stops at the first stage that stops.
-  Exit codes: 0 clean, 1 stopped or error, 2 ran but found a breach or an IRRBB outlier (the
+  generate -> raw checks -> quality -> metrics -> IRRBB -> limits and stops at the first stage
+  that stops. Exit codes: 0 clean, 1 stopped or error, 2 ran but found a regulatory breach, an
+  IRRBB outlier, or an internal limit at warning or breach on the latest date (the
   separate commands still exit 1 on findings; schedulers should call the pipeline).
 - Logging: one setup (`riskplatform/logs.py`), UTC timestamps, level from the
   `RISKPLATFORM_LOG_LEVEL` environment variable; each pipeline run writes
@@ -132,6 +137,35 @@ data: hand-worked examples written before the code, and proofs against published
   the Phase 8 limit alerts. Exactly "1" was rejected because an out-of-memory kill would then
   be silent. BANK_UK was deliberately not resized. `tests/test_infra.py`
   checks the safety rules and that Terraform agrees with `storage.yaml` and the Dagster schedule.
+- **Phase 8 choices (decided 2026-11-14):** dashboard = **Streamlit** (live, tested, public
+  deploy in Phase 10) **plus Tableau-ready extracts** (CSV from the query layer); limit alerts
+  = **email through the existing SNS topic** (no Slack, no new secrets).
+- Internal limits (`config/limits.yaml`, validated by `LimitsConfig`; risk appetite, judgement,
+  NOT regulatory parameters; each has a `why`): LCR >= 110%, NSFR >= 105% (management buffers
+  above the 100% minimums), EVE loss <= 15% of Tier 1 (equal to the SRP31.82 outlier test).
+  Thresholds: warning at 90% used, breach at 100% (inclusive). Levels: entity and group
+  (per-currency stays monitoring only). Both regimes against the same limits. No NII limit yet
+  (needs projected NII, which the platform does not calculate; labelled).
+- Utilisation (`riskplatform/limits.py`, pure functions): floor = limit / actual; cap = actual /
+  limit. Floor ratio 0/0 (NaN) or infinite = 0% used (nothing owed, as `_meets`); ratio 0 or
+  below with something owed = infinite = breach. EVE share = eve_risk / tier1 (a loss with no
+  positive Tier 1 = breach). An EVE breach equals an IRRBB outlier except at exactly 15.0%
+  (limit breached when reached, >=; outlier test needs a loss above, >). Any regulatory
+  shortfall (< 100%) is always a limit breach (tested).
+- Limits stage (8.2): `run_limits(data_dir, run_id, cfg)` writes `data/limits/<run_id>/`
+  `limits.parquet` (every date) and strict-JSON `summary.json` (as_of, limits used,
+  latest_status counts, alerts: warnings and breaches on the latest date, breaches first; an
+  infinite utilisation is `null`). Column is `limit_name` (not `limit`, a SQL keyword); JSON
+  alert key stays `"limit"`. Pipeline stage `limits` after IRRBB: findings (exit 2) if any
+  alert, including a warning alone (decided: 2 means "needs attention"; it sends no email).
+  Each alert is a WARNING log line (`describe_alert`). Also: own command
+  `python -m riskplatform.limits` (exit 1 on alerts), uploaded to S3 before latest.json,
+  `limits` view in the query layer, Dagster asset `limit_status` with a WARN check
+  `no_limit_warning_or_breach` (`published_run` waits for it).
+- Current results (as of Fri 13 Nov 2026, 75 business days): LCR and NSFR limits ok
+  everywhere; EVE: 3 breaches (BANK_UK 20.7% of Tier 1 = 138% used, Basel and PRA; BANK_US
+  Basel 15.2% = 101%, new as the series grew) and 5 warnings (group and BANK_EU 95-97%, BANK_US
+  PRA 95%). So the 8.3 limit email would arrive every weekday until the EVE book changes.
 
 ## Status
 | Phase | Status |
@@ -144,7 +178,8 @@ data: hand-worked examples written before the code, and proofs against published
 | 5. Interest rate risk (IRRBB) | Done: Basel + UK PRA rulebooks (sourced), worked example (reproduces SRP31.92), shocks + UK floor, repricing gap, delta EVE + aggregation + outlier test, delta NII, IRRBB run, methodology doc; swap hedges added to the generator |
 | 6. Testing and hardening | Done: one-command pipeline with exit codes (6.1), shared logging + run log files (6.2), edge cases: missing curve now a STOP, missing book a WARNING, LCR 0/0, empty folders (6.3), limits moved to config (6.4), metrics/IRRBB about 6x faster, slow tests shortened (6.5), 98% branch coverage and 16/16 planted formula bugs caught (6.6). 423 tests, about 1 minute. |
 | 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). 490 tests, about 1.5 minutes. **Not yet applied to AWS** (no Terraform state on this PC; Terraform not installed): follow `infra/README.md`. |
-| 8-10. Alerts + Tableau, model validation, deploy | Not started |
+| 8. Alerts and dashboard | In progress: 8.1 limits config + utilisation (done, committed), 8.2 limits stage + S3 + query view + Dagster asset (done, 525 tests, about 4 minutes; uncommitted when written). To do: 8.3 SNS limit emails, 8.4 what changed since yesterday, 8.5 Streamlit dashboard, 8.6 Tableau extracts, 8.7 daily PDF, 8.8 docs. |
+| 9-10. Model validation, deploy | Not started |
 
 ## Next steps
 1. Deploy Phase 7 (the author runs these): install Terraform, apply `billing/` first, then
@@ -152,11 +187,18 @@ data: hand-worked examples written before the code, and proofs against published
 2. Decided before the schedule goes on (done, see design decisions): alerts on failures only,
    findings wait for Phase 8; each run generates up to its own date (`--as-of today`).
    BANK_UK stays an IRRBB outlier (20.5% of Tier 1; group 14.2%), so runs exit 2 without email.
-3. Phase 8: limit utilisation alerts (90% warning, 100% breach; this is where findings get
-   their alerts) and the dashboard, reading through `riskplatform.query`. The series now grows
-   by a day per run, so "what changed since yesterday" compares the last two dates.
-4. Walk through the code in plain words (see "Walkthrough debt").
-5. Not covered by tests on purpose: the live HTTP fetch and `main()` in
+3. **Phase 8, step 8.3 (next): limit alert emails.** Proposed, not yet approved: after the
+   limits stage, if `summary.json` has alerts, publish ONE email (breaches first, one
+   `describe_alert` line each) to the existing SNS topic; locally, or with no topic set, log
+   only. Terraform: task role gets `sns:Publish` on that one topic only; the task gets the topic
+   ARN as an environment variable (no wildcards: `tests/test_infra.py` checks). Test with moto's
+   SNS. The failure alerts (exit codes except 0 and 2) stay as they are.
+4. Then 8.4 "what changed since yesterday" (latest date vs the one before, from the growing
+   series), 8.5 Streamlit dashboard (LCR/NSFR trend, limit gauges, NII/EVE by scenario,
+   breaks summary) reading through `riskplatform.query`, 8.6 Tableau CSV extracts, 8.7 daily
+   PDF report, 8.8 docs and this file.
+5. Walk through the code in plain words (see "Walkthrough debt").
+6. Not covered by tests on purpose: the live HTTP fetch and `main()` in
    `ingestion/market_rates.py` (needs the internet; the parsers are tested on sample replies).
 
 ## Assumptions to review before this goes on a resume
@@ -182,6 +224,9 @@ download cache and its marker), `orchestration/definitions.py`, the Dockerfile, 
 `GeneratorConfig.through` and `parse_as_of` in `config.py` (business-day count, UTC today), and
 `daily_schedule` in `orchestration/definitions.py` (scheduled date, run key; run config
 replaces the whole resource config).
+Added in Phase 8: `limits.py` (`utilisation` floor vs cap and its edge cases, `measure_limits`,
+`run_limits`, `latest_alerts` ordering), `LimitsConfig` in `config.py`, the `limits` stage in
+`pipeline.py`, and `limit_status` in `orchestration/definitions.py`.
 
 ## How to run
 First time on a new machine:
@@ -210,6 +255,8 @@ Query the latest good run with SQL (local data/, or `--source s3` with RISKPLATF
 ```
 python -m riskplatform.query --tables
 python -m riskplatform.query "SELECT regime, entity, lcr FROM lcr WHERE level = 'entity'"
+python -m riskplatform.query "SELECT regime, entity, limit_name, utilisation, status FROM limits WHERE status <> 'ok' AND date = (SELECT max(date) FROM limits)"
+python -m riskplatform.limits                    # limits for the latest run (exit 1 on alerts)
 ```
 Orchestration and cloud:
 ```
@@ -239,6 +286,12 @@ python -m riskplatform.irrbb.run --config config/generator_real.yaml
 ```
 All data is written under `data/` (ignored by Git).
 
-## Resuming in a new chat
-Paste this file (or ask Claude to read it and the code base) and say which step you are on, for
-example "Phase 7: deploying" or "Phase 8, step 8.1". Claude never commits or pushes.
+## Resuming in a new chat (or on another device)
+1. On this device: commit and push first (the author does this; Claude never commits or pushes).
+2. On the other device: `git pull`, then create or refresh the venv (see "How to run":
+   `pip install -e ".[dev]"`, plus `".[orchestration]"` for the Dagster UI), and check the
+   suite is green: `pytest`, `ruff check .`, `ruff format --check .` (525 tests, about 4 min).
+   `data/` is not in Git: run `riskplatform-run --as-of today` once to recreate it.
+3. Ask Claude to read this file and the code base, and say the step, e.g. "Phase 8, step 8.3".
+Note: if the PC sleeps during a long run, timings include the sleep (on 2026-11-14 a 4-minute
+suite showed 3.5 hours); keep it awake for long runs or check the Windows power log.

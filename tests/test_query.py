@@ -18,6 +18,7 @@ from riskplatform.config import load_storage_config
 from riskplatform.pipeline import load_inputs, run_pipeline
 from riskplatform.query import (
     COMPLETE,
+    STAGES,
     TABLES,
     QueryInputError,
     connect,
@@ -92,7 +93,7 @@ def test_run_id_is_never_pasted_into_sql_unescaped(data_dir, tmp_path):
     """A quote in a folder name or run id must not break (or change) the SQL."""
     run_id = _run_id(data_dir)
     odd = tmp_path / "it's"
-    for stage in ("metrics", "irrbb"):
+    for stage in STAGES:
         shutil.copytree(data_dir / stage / run_id, odd / stage / "a'b")
     con = connect(odd, "a'b")
     assert con.execute("SELECT run_id FROM run").fetchone() == ("a'b",)

@@ -5,7 +5,7 @@ Materialise everything once:   dagster asset materialize --select "*" -m riskpla
 
 Each stage's output is a Dagster **asset**, so the UI shows lineage, run history and metadata:
 
-    raw_data -> raw_checks -> validated_data -> liquidity_metrics -> published_run
+    raw_data -> raw_checks -> validated_data -> liquidity_metrics -> limit_status -> published_run
                                              -> irrbb_results     ->
 
 Every asset calls the same function as the pipeline command (riskplatform.pipeline), so there
@@ -33,6 +33,7 @@ import dagster as dg
 from riskplatform.config import load_storage_config, parse_as_of
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import run_irrbb
+from riskplatform.limits import describe_alert, run_limits
 from riskplatform.metrics.run import run_metrics
 from riskplatform.pipeline import PipelineInputs, load_inputs
 from riskplatform.quality.run import run_quality
@@ -51,6 +52,7 @@ class PipelineSettings(dg.ConfigurableResource):
     liquidity: str = "config/liquidity"
     irrbb: str = "config/irrbb"
     storage: str = "config/storage.yaml"
+    limits: str = "config/limits.yaml"
     data: str = "data"
     # Generate business days up to this date (YYYY-MM-DD or 'today'); empty: the config's
     # n_days. The schedule sets it to each run's scheduled date (see daily_schedule).
@@ -60,7 +62,12 @@ class PipelineSettings(dg.ConfigurableResource):
         """Every config, loaded and validated (a bad config fails before any data is written)."""
         as_of = parse_as_of(self.as_of) if self.as_of else None
         return load_inputs(
-            Path(self.config), Path(self.quality), Path(self.liquidity), Path(self.irrbb), as_of
+            Path(self.config),
+            Path(self.quality),
+            Path(self.liquidity),
+            Path(self.irrbb),
+            as_of,
+            limits_path=Path(self.limits),
         )
 
     @property
@@ -186,6 +193,37 @@ def irrbb_results(settings: PipelineSettings) -> dg.MaterializeResult:
 @dg.asset(
     group_name=GROUP,
     deps=[liquidity_metrics, irrbb_results],
+    kinds={"python"},
+    check_specs=[dg.AssetCheckSpec("no_limit_warning_or_breach", asset="limit_status")],
+)
+def limit_status(settings: PipelineSettings) -> dg.MaterializeResult:
+    """Utilisation and status of every internal limit (config/limits.yaml) for this run."""
+    run = run_limits(settings.data_dir, _published_run_id(settings), settings.inputs().limits)
+    counts = run.summary["latest_status"]
+    return dg.MaterializeResult(
+        metadata={
+            "as_of": run.summary["as_of"],
+            "breaches": counts["breach"],
+            "warnings": counts["warning"],
+            "alerts": dg.MetadataValue.md(
+                "\n".join(f"- {describe_alert(alert)}" for alert in run.alerts) or "None."
+            ),
+            "path": dg.MetadataValue.path(str(run.out_dir)),
+        },
+        check_results=[
+            dg.AssetCheckResult(
+                check_name="no_limit_warning_or_breach",
+                passed=not run.alerts,
+                severity=WARN,
+                metadata={"breaches": counts["breach"], "warnings": counts["warning"]},
+            )
+        ],
+    )
+
+
+@dg.asset(
+    group_name=GROUP,
+    deps=[limit_status],
     kinds={"s3"},
     retry_policy=dg.RetryPolicy(max_retries=3, delay=30, backoff=dg.Backoff.EXPONENTIAL),
 )
@@ -198,7 +236,8 @@ def published_run(settings: PipelineSettings) -> dg.MaterializeResult:
     data = settings.data_dir
     metrics = json.loads((data / "metrics" / run_id / "summary.json").read_text(encoding="utf-8"))
     irrbb = json.loads((data / "irrbb" / run_id / "summary.json").read_text(encoding="utf-8"))
-    findings = bool(metrics["breaches"] or irrbb["outliers"])
+    limits = json.loads((data / "limits" / run_id / "summary.json").read_text(encoding="utf-8"))
+    findings = bool(metrics["breaches"] or irrbb["outliers"] or limits["alerts"])
     status, exit_code = ("findings", 2) if findings else ("ok", 0)
     stages = [
         {"name": name, "status": "ok"} for name in ("raw_data", "raw_checks", "validated_data")
@@ -215,7 +254,15 @@ def published_run(settings: PipelineSettings) -> dg.MaterializeResult:
     )
 
 
-ASSETS = [raw_data, raw_checks, validated_data, liquidity_metrics, irrbb_results, published_run]
+ASSETS = [
+    raw_data,
+    raw_checks,
+    validated_data,
+    liquidity_metrics,
+    irrbb_results,
+    limit_status,
+    published_run,
+]
 
 daily_job = dg.define_asset_job("daily_risk_pipeline", selection=dg.AssetSelection.groups(GROUP))
 

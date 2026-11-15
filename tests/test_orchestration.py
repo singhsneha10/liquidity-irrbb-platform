@@ -19,6 +19,7 @@ ORDER = [
     "validated_data",
     "liquidity_metrics",
     "irrbb_results",
+    "limit_status",
     "published_run",
 ]
 BUCKET, REGION = "riskplatform-test", "eu-west-2"
@@ -70,7 +71,8 @@ def test_lineage_follows_the_pipeline_order():
         "validated_data": {"raw_checks"},
         "liquidity_metrics": {"validated_data"},
         "irrbb_results": {"validated_data"},
-        "published_run": {"liquidity_metrics", "irrbb_results"},
+        "limit_status": {"liquidity_metrics", "irrbb_results"},
+        "published_run": {"limit_status"},
     }
 
 
@@ -82,7 +84,7 @@ def test_a_full_run_materializes_every_asset_and_reports_the_checks(settings):
     validated = result.asset_materializations_for_node("validated_data")[0]
     assert validated.metadata["run_id"].value == run_id
     checks = {c.check_name: c for c in result.get_asset_check_evaluations()}
-    assert set(checks) == {"no_liquidity_breach", "no_irrbb_outlier"}
+    assert set(checks) == {"no_liquidity_breach", "no_irrbb_outlier", "no_limit_warning_or_breach"}
     assert all(
         c.severity == dg.AssetCheckSeverity.WARN for c in checks.values()
     )  # findings never block
@@ -162,3 +164,15 @@ def test_as_of_setting_sets_the_days_of_every_asset(settings):
     assert len(list((data / "validated" / "positions").glob("*.parquet"))) == 3
     irrbb = json.loads((data / "irrbb" / run_id / "summary.json").read_text())
     assert irrbb["dates"] == 3
+
+
+def test_limit_status_writes_what_the_pipeline_stage_writes(settings):
+    result = _run(settings)
+    assert result.success
+    data = Path(settings.data)
+    run_id = json.loads((data / "validated" / "_run.json").read_text())["run_id"]
+    summary = json.loads((data / "limits" / run_id / "summary.json").read_text())
+    status = result.asset_materializations_for_node("limit_status")[0].metadata
+    assert status["breaches"].value == summary["latest_status"]["breach"]
+    assert status["warnings"].value == summary["latest_status"]["warning"]
+    assert status["as_of"].value == summary["as_of"]

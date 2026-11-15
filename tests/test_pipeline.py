@@ -5,16 +5,19 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 import pytest
+import yaml
 
 from riskplatform import pipeline
+from riskplatform.config import load_limits_config
 from riskplatform.controls import CONTROL_FILE
 from riskplatform.pipeline import PipelineResult, StageResult, load_inputs, main, run_pipeline
 from riskplatform.validation.check_raw import CheckResult
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config"
-ALL_STAGES = ["generate", "raw_checks", "quality", "metrics", "irrbb"]
+ALL_STAGES = ["generate", "raw_checks", "quality", "metrics", "irrbb", "limits"]
 
 
 @pytest.fixture(scope="module")
@@ -57,10 +60,49 @@ def test_runs_every_stage_and_links_the_outputs(inputs, tmp_path):
     run_id = _json(tmp_path / "validated" / "_run.json")["run_id"]
     metrics = _json(tmp_path / "metrics" / run_id / "summary.json")
     irrbb = _json(tmp_path / "irrbb" / run_id / "summary.json")
-    assert metrics["source_run_id"] == irrbb["source_run_id"] == run_id
+    limits = _json(tmp_path / "limits" / run_id / "summary.json")
+    assert metrics["source_run_id"] == irrbb["source_run_id"] == limits["source_run_id"] == run_id
     # The pipeline's verdict is exactly what the stages found.
-    found = bool(metrics["breaches"] or irrbb["outliers"])
+    found = bool(metrics["breaches"] or irrbb["outliers"] or limits["alerts"])
     assert result.status == ("findings" if found else "ok")
+
+
+def _loose_limits(tmp_path: Path, lcr: float) -> Path:
+    """config/limits.yaml with the LCR floor at lcr and the EVE cap far away (no EVE alert)."""
+    raw = yaml.safe_load((CONFIG / "limits.yaml").read_text(encoding="utf-8"))
+    raw["limits"]["lcr"]["value"] = lcr
+    raw["limits"]["eve_tier1"]["value"] = 0.99
+    path = tmp_path / f"limits-{lcr}.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return path
+
+
+def test_a_limit_warning_alone_makes_the_limits_stage_findings(inputs, tmp_path):
+    """The EVE cap is set far away, so only the LCR floor decides. A floor at 100% leaves every
+    limit ok; a floor at 95% of the lowest LCR uses exactly 95% of it: a warning (findings)."""
+    relaxed = dataclasses.replace(inputs, limits=load_limits_config(_loose_limits(tmp_path, 1.0)))
+    result = run_pipeline(relaxed, tmp_path / "relaxed")
+    assert result.stages[-1].status == "ok"
+    table = pd.read_parquet(next((tmp_path / "relaxed" / "limits").glob("*/limits.parquet")))
+    latest = table[(table["limit_name"] == "lcr") & (table["date"] == table["date"].max())]
+
+    floor = float(0.95 * latest["actual"].min())  # a plain float: YAML cannot write numpy's
+    tight = dataclasses.replace(inputs, limits=load_limits_config(_loose_limits(tmp_path, floor)))
+    result = run_pipeline(tight, tmp_path / "tight")
+    assert result.stages[-1].status == "findings"
+    summary = _json(next((tmp_path / "tight" / "limits").glob("*/summary.json")))
+    assert summary["latest_status"]["breach"] == 0 and summary["latest_status"]["warning"] >= 1
+    assert {alert["limit"] for alert in summary["alerts"]} == {"lcr"}
+
+
+def test_bad_limits_config_fails_before_any_data_is_written(tmp_path):
+    bad = tmp_path / "limits.yaml"
+    raw = yaml.safe_load((CONFIG / "limits.yaml").read_text(encoding="utf-8"))
+    raw["thresholds"]["warning"] = 1.5  # above the breach threshold
+    bad.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="must not be above breach"):
+        main(["--limits", str(bad), "--data", str(tmp_path / "data")])
+    assert not (tmp_path / "data").exists()
 
 
 def test_failed_raw_check_stops_before_quality(inputs, tmp_path, monkeypatch):
