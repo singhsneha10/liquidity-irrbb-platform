@@ -3,9 +3,10 @@
 **Project:** Automated Liquidity & Interest Rate Risk Monitoring Platform
 **Goal:** A production-quality, end-to-end, deployed portfolio project that impresses senior
 people at banks such as JPMorgan (Risk Analyst roles). Business use comes later.
-**Last updated:** 2026-11-15. Phase 7 code complete (AWS deployment pending, run by the author).
-Phase 8 in progress: 8.1 limits committed (`207afaa`); 8.2 limits stage done and tested
-(525 tests) but **not committed when this was written**; next is 8.3 (limit alert emails).
+**Last updated:** 2026-11-16. Phases 7 and 8 code complete. AWS deployment (7.5) is still
+pending, run by the author on the personal laptop. 8.1-8.7 were committed by the author step by
+step; 8.8 (README, `docs/reporting.md`, this file) was **not committed when this was written**.
+597 tests. Next: deploy, then Phase 9 (model validation).
 
 ## Working rules
 1. Think of the project as a whole; build step by step with the big picture in mind.
@@ -30,10 +31,15 @@ market data (synthetic, or saved FRED / ECB / Bank of England files)
   -> metrics run -> data/metrics/<run>/ (LCR, NSFR, ladder: Basel and UK PRA)
   -> IRRBB run -> data/irrbb/<run>/ (delta EVE, outlier test, delta NII, gap: Basel and UK PRA)
   -> limits -> data/limits/<run>/ (utilisation and ok/warning/breach of config/limits.yaml)
+  -> changes -> data/changes/<run>/ (latest day vs the one before; volume / FX balance drivers)
+  -> extracts -> data/extracts/<run>/ + latest/ (Tableau CSVs)
+  -> report -> data/reports/<run>/daily_report.pdf
   -> (backend s3) S3 under the run id; latest.json last -> query layer (DuckDB SQL views)
-  -> (Phase 8, to come) limit alert email via SNS; Streamlit dashboard + Tableau extracts; PDF
+  -> one limit alert email via SNS if a limit is at warning or breach (topic set only in AWS)
+Query layer -> Streamlit dashboard (riskplatform-dashboard), extracts and PDF (same numbers).
 In AWS: EventBridge Scheduler -> ECS Fargate task (Docker image from ECR) -> S3 + CloudWatch
-Logs; a failed run (any exit code except 0 and 2) -> SNS email. Each run uses --as-of today.
+Logs; a failed run (any exit code except 0 and 2) -> SNS email; a limit at warning or breach ->
+the limit alert email (same topic). Each run uses --as-of today.
 Locally: the same stages as Dagster assets (dagster dev).
 ```
 The data contracts (`src/riskplatform/schemas.py`) are the seam: real data can replace the
@@ -47,11 +53,11 @@ data: hand-worked examples written before the code, and proofs against published
 - LCR, NSFR and IRRBB (NII and EVE, six Basel shocks), all done, as pure functions, with
   regulatory parameters in YAML; **Basel and UK PRA rulebooks side by side**
 - Model validation module: backtest deposit run-off assumptions
-- UK entity limits and early-warning indicators; "what changed since yesterday" analysis
-- Outputs: Tableau-ready extracts, Excel export, one-page summary report, optional AI commentary
-  (all numbers from code, never from the model)
-- Dashboard: **Streamlit** (live, deployable) plus **Tableau-ready extracts** (decided in Phase 8);
-  FastAPI backend optional later (Alteryx optional for data prep)
+- Internal limits with warning / breach and "what changed since yesterday" (done, Phase 8)
+- Outputs: Tableau-ready CSV extracts and a daily PDF report (done, Phase 8); Excel export and
+  optional AI commentary not done (all numbers from code, never from the model)
+- Dashboard: **Streamlit** (done, local; public deploy in Phase 10) plus **Tableau-ready
+  extracts** (done); FastAPI backend optional later (Alteryx optional for data prep)
 - Docker; GitHub Actions CI (lint, tests, image build and run, Terraform validate) (done)
 - AWS (S3, ECS Fargate, ECR, EventBridge Scheduler, CloudWatch, SNS) with Terraform, billing
   alarm first (code done; not yet applied)
@@ -66,8 +72,8 @@ data: hand-worked examples written before the code, and proofs against published
   `config/irrbb/basel.yaml`, `pra.yaml`. No limits in code: rate sanity bounds (`rate_bounds`,
   -5% to 25%) are in `generator.yaml` and `market_rates.yaml` (a test keeps them equal).
 - One command (`riskplatform-run`, `python -m riskplatform.pipeline`, or `make run`) runs
-  generate -> raw checks -> quality -> metrics -> IRRBB -> limits and stops at the first stage
-  that stops. Exit codes: 0 clean, 1 stopped or error, 2 ran but found a regulatory breach, an
+  generate -> raw checks -> quality -> metrics -> IRRBB -> limits -> changes -> extracts ->
+  report and stops at the first stage that stops (changes, extracts and report are always ok). Exit codes: 0 clean, 1 stopped or error, 2 ran but found a regulatory breach, an
   IRRBB outlier, or an internal limit at warning or breach on the latest date (the
   separate commands still exit 1 on findings; schedulers should call the pipeline).
 - Logging: one setup (`riskplatform/logs.py`), UTC timestamps, level from the
@@ -115,7 +121,8 @@ data: hand-worked examples written before the code, and proofs against published
   `latest.json` written last and only for a run that published validated data. No credentials
   in code or config (AWS profile on a PC, the task's IAM role in AWS). Tested with moto.
 - Query layer (`riskplatform/query.py`): DuckDB views `lcr, nsfr, ladder, eve, risk, nii, gap,
-  run` over the latest good run only (local: `data/validated/_run.json`; S3: `latest.json`).
+  limits, limit_changes, metric_changes, balance_drivers, quarantine, run` over the latest good
+  run only (local: `data/validated/_run.json`; S3: `latest.json`).
   From S3 the run (about 1 MB) is downloaded once to `data/cache/`. Labelled choice over DuckDB
   httpfs (extensions downloaded at run time) and Athena (Glue catalogue, cost per query; the
   step up for querying many runs in place).
@@ -133,8 +140,7 @@ data: hand-worked examples written before the code, and proofs against published
   default; SNS email on any exit code except 0 and 2, or a task that fails to start).
   **Alerts are for failures only (decided 2026-11-13):** exit 1 (stopped or error) and crash
   codes the program never sees (137 out of memory, 143 killed) email; findings (exit 2: a
-  breach or an IRRBB outlier) do not, they stay in the logs, S3 and latest.json and wait for
-  the Phase 8 limit alerts. Exactly "1" was rejected because an out-of-memory kill would then
+  breach or an IRRBB outlier) do not; they are covered by the limit alert email (8.3). Exactly "1" was rejected because an out-of-memory kill would then
   be silent. BANK_UK was deliberately not resized. `tests/test_infra.py`
   checks the safety rules and that Terraform agrees with `storage.yaml` and the Dagster schedule.
 - **Phase 8 choices (decided 2026-11-14):** dashboard = **Streamlit** (live, tested, public
@@ -162,10 +168,46 @@ data: hand-worked examples written before the code, and proofs against published
   `python -m riskplatform.limits` (exit 1 on alerts), uploaded to S3 before latest.json,
   `limits` view in the query layer, Dagster asset `limit_status` with a WARN check
   `no_limit_warning_or_breach` (`published_run` waits for it).
-- Current results (as of Fri 13 Nov 2026, 75 business days): LCR and NSFR limits ok
-  everywhere; EVE: 3 breaches (BANK_UK 20.7% of Tier 1 = 138% used, Basel and PRA; BANK_US
-  Basel 15.2% = 101%, new as the series grew) and 5 warnings (group and BANK_EU 95-97%, BANK_US
-  PRA 95%). So the 8.3 limit email would arrive every weekday until the EVE book changes.
+- **Limit alert email (8.3, `riskplatform/notify.py`):** after publishing, ONE email per run to
+  the existing SNS topic if any limit is at warning or breach (subject `riskplatform limits
+  <date>: N breaches, M warnings`; one `describe_alert` line each, breaches first; then the
+  "since the day before" section). Topic only from `RISKPLATFORM_ALERT_TOPIC_ARN` (Terraform
+  sets it on the task; absent locally, in tests and CI: log only). Task role: `sns:Publish` on
+  that one topic (`tests/test_infra.py`). A send failure raises (exit 1, so the failure alert
+  fires). Repeats every run while a limit stays there (labelled). Tested with moto SNS + SQS.
+- **Since the day before (8.4, `riskplatform/changes.py`, `config/reporting.yaml`):**
+  "yesterday" = previous business day of the same run's series (equals the previous run's
+  latest day, as the series regenerates identically; labelled). `limit_changes` (movement:
+  new / worse / resolved / better / unchanged; no result yesterday counts as ok),
+  `metric_changes` (the limits' actuals), `balance_drivers` (on balance sheet, per entity,
+  category, side, GBP: volume = local change x FX yesterday, FX = today's balance x FX move;
+  they add up exactly), `summary.json` (top drivers: `top_drivers: 10` in config). Pipeline
+  stage `changes`, S3 `changes/<run>/`, three query views, Dagster `daily_changes`.
+- **Dashboard (8.5, `riskplatform/dashboard/`):** Streamlit 1.67 (`.[dashboard]` extra, not in
+  the Docker image). `data.py` = one SQL query per chart over the query views (no Streamlit
+  import; tested against the run's files); `app.py` = header tiles, tabs Limits / Liquidity /
+  IRRBB / Since the day before / Data quality, sidebar Basel vs PRA. Colours from the reference
+  chart palette (entities fixed by name order, group neutral, status colours always with the
+  word). One light theme (`.streamlit/config.toml`, labelled). Tested with Streamlit AppTest;
+  layout checked by screenshot (Playwright + Edge, not part of the repo). Quarantine became a
+  query view for its Data quality tab.
+- **Tableau extracts (8.6, `riskplatform/extracts.py`):** one CSV per query view plus
+  `liquidity_ratios.csv` (LCR and NSFR stacked with minimum and internal limit) and
+  `manifest.json`; dates YYYY-MM-DD, ratios as fractions, `who` column, infinities written
+  empty (one "inf" turns a Tableau column into text). `data/extracts/latest/` replaced by a
+  copy (not atomic on Windows, labelled). Stage `extracts`, S3, Dagster `tableau_extracts`,
+  command `riskplatform-extracts`.
+- **Daily PDF (8.7, `riskplatform/report.py`):** ReportLab 5.1 (core dependency, so in the
+  image), two A4 pages: headline, limits at warning or breach, liquidity + LCR trend chart,
+  IRRBB (outlier test, NII +-200bp), since the day before, data quality. Uses the dashboard's
+  `data.py`, so every output shows the same numbers. Invariant mode (same run, same bytes).
+  Tests read the text back with pypdf (dev only). Stage `report`, S3 `reports/<run>/`, Dagster
+  `daily_report`, command `riskplatform-report`.
+- Current results (as of Mon 16 Nov 2026, 76 business days): LCR and NSFR limits ok
+  everywhere; EVE: 2 breaches (BANK_UK 20.3% of Tier 1 = 135% used, Basel and PRA) and 4
+  warnings (BANK_EU 97% Basel / 98% PRA, group 95% Basel / 96% PRA); BANK_US is back to ok
+  (it breached at 75 days). So the limit email arrives every weekday until the EVE book
+  changes. The whole pipeline takes about 30 s at 76 days.
 
 ## Status
 | Phase | Status |
@@ -178,27 +220,25 @@ data: hand-worked examples written before the code, and proofs against published
 | 5. Interest rate risk (IRRBB) | Done: Basel + UK PRA rulebooks (sourced), worked example (reproduces SRP31.92), shocks + UK floor, repricing gap, delta EVE + aggregation + outlier test, delta NII, IRRBB run, methodology doc; swap hedges added to the generator |
 | 6. Testing and hardening | Done: one-command pipeline with exit codes (6.1), shared logging + run log files (6.2), edge cases: missing curve now a STOP, missing book a WARNING, LCR 0/0, empty folders (6.3), limits moved to config (6.4), metrics/IRRBB about 6x faster, slow tests shortened (6.5), 98% branch coverage and 16/16 planted formula bugs caught (6.6). 423 tests, about 1 minute. |
 | 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). 490 tests, about 1.5 minutes. **Not yet applied to AWS** (no Terraform state on this PC; Terraform not installed): follow `infra/README.md`. |
-| 8. Alerts and dashboard | In progress: 8.1 limits config + utilisation (done, committed), 8.2 limits stage + S3 + query view + Dagster asset (done, 525 tests, about 4 minutes; uncommitted when written). To do: 8.3 SNS limit emails, 8.4 what changed since yesterday, 8.5 Streamlit dashboard, 8.6 Tableau extracts, 8.7 daily PDF, 8.8 docs. |
+| 8. Alerts and dashboard | Done: limits config + utilisation (8.1), limits stage + S3 + query view + Dagster asset (8.2), SNS limit alert email (8.3), what changed since yesterday (8.4), Streamlit dashboard (8.5), Tableau CSV extracts (8.6), daily PDF report (8.7), README + `docs/reporting.md` + this file (8.8). 597 tests, 2 to 6 minutes (varies from run to run; not yet profiled). |
 | 9-10. Model validation, deploy | Not started |
 
 ## Next steps
-1. Deploy Phase 7 (the author runs these): install Terraform, apply `billing/` first, then
-   `platform/`, push the image, one manual run, then `schedule_enabled = true`.
-2. Decided before the schedule goes on (done, see design decisions): alerts on failures only,
-   findings wait for Phase 8; each run generates up to its own date (`--as-of today`).
-   BANK_UK stays an IRRBB outlier (20.5% of Tier 1; group 14.2%), so runs exit 2 without email.
-3. **Phase 8, step 8.3 (next): limit alert emails.** Proposed, not yet approved: after the
-   limits stage, if `summary.json` has alerts, publish ONE email (breaches first, one
-   `describe_alert` line each) to the existing SNS topic; locally, or with no topic set, log
-   only. Terraform: task role gets `sns:Publish` on that one topic only; the task gets the topic
-   ARN as an environment variable (no wildcards: `tests/test_infra.py` checks). Test with moto's
-   SNS. The failure alerts (exit codes except 0 and 2) stay as they are.
-4. Then 8.4 "what changed since yesterday" (latest date vs the one before, from the growing
-   series), 8.5 Streamlit dashboard (LCR/NSFR trend, limit gauges, NII/EVE by scenario,
-   breaks summary) reading through `riskplatform.query`, 8.6 Tableau CSV extracts, 8.7 daily
-   PDF report, 8.8 docs and this file.
-5. Walk through the code in plain words (see "Walkthrough debt").
-6. Not covered by tests on purpose: the live HTTP fetch and `main()` in
+1. **Deploy Phases 7 and 8** (the author runs these, on the personal laptop): install Terraform,
+   apply `billing/` first, then `platform/` (now also `sns:Publish` for the task and the topic
+   ARN on it), build and push the image (now includes ReportLab), one manual run, then
+   `schedule_enabled = true`. Paste each `terraform plan` for review before applying. Expect
+   exit 2 and one limit alert email per run (BANK_UK EVE breach).
+2. Decided before the schedule goes on (done): failure alerts for exit codes except 0 and 2;
+   limit alert email for findings; each run generates up to its own date (`--as-of today`).
+3. Open question: `config/limits.yaml` cites "UK SS31/15" for the 15% outlier test, while
+   `docs/irrbb_methodology.md`, `docs/reporting.md` and the PDF cite UK ICAA 9.4A. Check the
+   official text and make them agree.
+4. Profile the test suite (it varies from 2 to 6 minutes): `pytest --durations=20`.
+5. **Phase 9: model validation** (backtest deposit run-off assumptions); Phase 10: public deploy
+   of the dashboard.
+6. Walk through the code in plain words (see "Walkthrough debt").
+7. Not covered by tests on purpose: the live HTTP fetch and `main()` in
    `ingestion/market_rates.py` (needs the internet; the parsers are tested on sample replies).
 
 ## Assumptions to review before this goes on a resume
@@ -207,6 +247,8 @@ data: hand-worked examples written before the code, and proofs against published
   non-maturity deposit core share and maturity, and the NII scenarios and horizon.
 - `docs/data_dictionary.md`, "Known simplifications and limitations" and the licence notes.
 - `docs/data_quality.md`, "Simplifications and limitations".
+- `docs/reporting.md`, "Assumptions and simplifications" (9 items), especially the internal
+  limit values (judgement) and the repeating limit email.
 - Outlier thresholds in `config/quality.yaml` (review triggers, chosen by judgement).
 
 ## Walkthrough debt (code written but not yet explained line by line to the author)
@@ -226,7 +268,13 @@ download cache and its marker), `orchestration/definitions.py`, the Dockerfile, 
 replaces the whole resource config).
 Added in Phase 8: `limits.py` (`utilisation` floor vs cap and its edge cases, `measure_limits`,
 `run_limits`, `latest_alerts` ordering), `LimitsConfig` in `config.py`, the `limits` stage in
-`pipeline.py`, and `limit_status` in `orchestration/definitions.py`.
+`pipeline.py`, and `limit_status` in `orchestration/definitions.py`; `notify.py` (email text,
+`region_of`, when nothing is sent); `changes.py` (`movement` with `np.select`, the merge on the
+limit id with the group's empty entity, `balance_drivers` volume / FX split); `dashboard/data.py`
+(the SQL, `IS NOT DISTINCT FROM` for the group join) and `dashboard/app.py` (Altair layers, the
+hover selection, `st.cache_resource` with a cursor per page view); `extracts.py` (`_view_sql`,
+`_clean`, the latest/ copy); `report.py` (ReportLab platypus story, `KeepTogether`, the LinePlot
+chart, invariant mode).
 
 ## How to run
 First time on a new machine:
@@ -257,6 +305,12 @@ python -m riskplatform.query --tables
 python -m riskplatform.query "SELECT regime, entity, lcr FROM lcr WHERE level = 'entity'"
 python -m riskplatform.query "SELECT regime, entity, limit_name, utilisation, status FROM limits WHERE status <> 'ok' AND date = (SELECT max(date) FROM limits)"
 python -m riskplatform.limits                    # limits for the latest run (exit 1 on alerts)
+```
+Dashboard, Tableau extracts and the daily PDF (for the latest good run):
+```
+pip install -e ".[dashboard]"; riskplatform-dashboard   # or: make dashboard (http://localhost:8501)
+riskplatform-extracts                            # data/extracts/<run>/ and data/extracts/latest/
+riskplatform-report                              # data/reports/<run>/daily_report.pdf
 ```
 Orchestration and cloud:
 ```
@@ -289,9 +343,11 @@ All data is written under `data/` (ignored by Git).
 ## Resuming in a new chat (or on another device)
 1. On this device: commit and push first (the author does this; Claude never commits or pushes).
 2. On the other device: `git pull`, then create or refresh the venv (see "How to run":
-   `pip install -e ".[dev]"`, plus `".[orchestration]"` for the Dagster UI), and check the
-   suite is green: `pytest`, `ruff check .`, `ruff format --check .` (525 tests, about 4 min).
+   `pip install -e ".[dev]"`, plus `".[orchestration]"` for the Dagster UI and `".[dashboard]"`
+   for Streamlit), and check the suite is green: `pytest`, `ruff check .`, `ruff format --check .`
+   (597 tests, 2 to 6 minutes).
    `data/` is not in Git: run `riskplatform-run --as-of today` once to recreate it.
-3. Ask Claude to read this file and the code base, and say the step, e.g. "Phase 8, step 8.3".
+3. Ask Claude to read this file and the code base, and say the step, e.g. "Phase 9" or
+   "deploy step 7.5".
 Note: if the PC sleeps during a long run, timings include the sleep (on 2026-11-14 a 4-minute
 suite showed 3.5 hours); keep it awake for long runs or check the Windows power log.
