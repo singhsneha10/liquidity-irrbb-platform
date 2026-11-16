@@ -1,5 +1,5 @@
 """The whole daily pipeline in one command: generate -> raw checks -> quality -> metrics ->
-IRRBB -> limits -> changes.
+IRRBB -> limits -> changes -> extracts.
 
 Run with:  python -m riskplatform.pipeline          (or: riskplatform-run, or: make run)
            python -m riskplatform.pipeline --config config/generator_real.yaml
@@ -23,10 +23,11 @@ Exit codes, so a scheduler can tell a broken run from a run that found something
      latest date. The numbers were produced; they need attention, not a rerun.
 
 The changes stage compares the latest day with the one before (riskplatform.changes, "what
-changed since yesterday"); it reports, so it is always ok and never changes the exit code.
+changed since yesterday"); it reports, so it is always ok and never changes the exit code. So
+does the extracts stage: Tableau-ready CSVs of the run (riskplatform.extracts).
 
 All outputs go under --data (default data/): raw/, validated/, quality_runs/, metrics/, irrbb/,
-limits/, changes/ and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
+limits/, changes/, extracts/ and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
 With backend s3 in --storage (config/storage.yaml, or RISKPLATFORM_STORAGE_BACKEND=s3), the
 run's outputs are then also copied to S3 under its run id (riskplatform.storage). Then, if any
 internal limit is at warning or breach and RISKPLATFORM_ALERT_TOPIC_ARN is set (in AWS), one
@@ -63,6 +64,7 @@ from riskplatform.config import (
     load_storage_config,
     parse_as_of,
 )
+from riskplatform.extracts import run_extracts
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import load_irrbb_regimes, run_irrbb
 from riskplatform.limits import describe_alert, run_limits
@@ -204,6 +206,10 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
         since = f"{summary['latest_date']} against {summary['previous_date']}"
         return "ok", f"limits {moved or 'none'} ({since}); {run.out_dir}"
 
+    def extracts_step() -> tuple[StageStatus, str]:
+        run = run_extracts(data_dir, seen["run_id"])
+        return "ok", f"{len(run.manifest['files'])} CSV files; {run.out_dir} (and {run.latest_dir})"
+
     steps: list[tuple[str, Step]] = [
         ("generate", generate_step),
         ("raw_checks", raw_checks_step),
@@ -212,6 +218,7 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
         ("irrbb", irrbb_step),
         ("limits", limits_step),
         ("changes", changes_step),
+        ("extracts", extracts_step),
     ]
     stages: list[StageResult] = []
     for name, step in steps:

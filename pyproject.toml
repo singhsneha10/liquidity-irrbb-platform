@@ -22,6 +22,7 @@ dependencies = [
 [project.scripts]
 riskplatform-run = "riskplatform.pipeline:main"
 riskplatform-dashboard = "riskplatform.dashboard.__main__:main"
+riskplatform-extracts = "riskplatform.extracts:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov", "ruff", "moto[s3]>=5.2", "dagster>=1.13", "streamlit>=1.67"]

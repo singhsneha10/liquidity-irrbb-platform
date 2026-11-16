@@ -6,7 +6,7 @@ Materialise everything once:   dagster asset materialize --select "*" -m riskpla
 Each stage's output is a Dagster **asset**, so the UI shows lineage, run history and metadata:
 
     raw_data -> raw_checks -> validated_data -> liquidity_metrics -> limit_status -> daily_changes
-                                             -> irrbb_results     ->                -> published_run
+                                             -> irrbb_results     ->     -> tableau_extracts -> published_run
 
 Every asset calls the same function as the pipeline command (riskplatform.pipeline), so there
 is no second copy of any logic. The rules match the pipeline:
@@ -32,6 +32,7 @@ import dagster as dg
 
 from riskplatform.changes import describe_movement, run_changes
 from riskplatform.config import load_storage_config, parse_as_of
+from riskplatform.extracts import run_extracts
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import run_irrbb
 from riskplatform.limits import describe_alert, run_limits
@@ -244,9 +245,24 @@ def daily_changes(settings: PipelineSettings) -> dg.MaterializeResult:
     )
 
 
+@dg.asset(group_name=GROUP, deps=[daily_changes], kinds={"csv"})
+def tableau_extracts(settings: PipelineSettings) -> dg.MaterializeResult:
+    """Tableau-ready CSVs of the run, also copied to data/extracts/latest/ (a fixed folder)."""
+    run = run_extracts(settings.data_dir, _published_run_id(settings))
+    files = run.manifest["files"]
+    return dg.MaterializeResult(
+        metadata={
+            "files": len(files),
+            "rows": sum(f["rows"] for f in files.values()),
+            "path": dg.MetadataValue.path(str(run.out_dir)),
+            "latest": dg.MetadataValue.path(str(run.latest_dir)),
+        }
+    )
+
+
 @dg.asset(
     group_name=GROUP,
-    deps=[daily_changes],
+    deps=[tableau_extracts],
     kinds={"s3"},
     retry_policy=dg.RetryPolicy(max_retries=3, delay=30, backoff=dg.Backoff.EXPONENTIAL),
 )
@@ -290,6 +306,7 @@ ASSETS = [
     irrbb_results,
     limit_status,
     daily_changes,
+    tableau_extracts,
     published_run,
 ]
 

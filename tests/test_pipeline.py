@@ -17,7 +17,16 @@ from riskplatform.validation.check_raw import CheckResult
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config"
-ALL_STAGES = ["generate", "raw_checks", "quality", "metrics", "irrbb", "limits", "changes"]
+ALL_STAGES = [
+    "generate",
+    "raw_checks",
+    "quality",
+    "metrics",
+    "irrbb",
+    "limits",
+    "changes",
+    "extracts",
+]
 
 
 @pytest.fixture(scope="module")

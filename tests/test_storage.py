@@ -102,7 +102,16 @@ def test_published_run_is_uploaded_under_its_id_and_becomes_latest(s3, storage, 
     result, record = _run_and_publish(s3, storage, inputs, tmp_path)
     run_id = result.run_id
     keys = _keys(s3)
-    for folder in ("raw", "quality_runs", "validated", "metrics", "irrbb", "limits", "changes"):
+    for folder in (
+        "raw",
+        "quality_runs",
+        "validated",
+        "metrics",
+        "irrbb",
+        "limits",
+        "changes",
+        "extracts",
+    ):
         assert any(k.startswith(f"riskplatform/{folder}/{run_id}/") for k in keys), folder
     assert f"riskplatform/validated/{run_id}/_run.json" in keys
     assert _json(s3, f"riskplatform/runs/{run_id}.json")["run_id"] == run_id

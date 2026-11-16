@@ -212,7 +212,8 @@ def pipeline_run(tmp_path_factory):
     small = loaded.generator.model_validate({**loaded.generator.model_dump(), "n_days": 2})
     data_dir = tmp_path_factory.mktemp("changes")
     result = run_pipeline(dataclasses.replace(loaded, generator=small), data_dir)
-    assert result.stages[-1].name == "changes" and result.stages[-1].status == "ok"
+    stage = next(stage for stage in result.stages if stage.name == "changes")
+    assert stage.status == "ok"
     return data_dir, result.run_id
 
 
