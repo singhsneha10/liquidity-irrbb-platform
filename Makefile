@@ -2,10 +2,13 @@
 # comments (with the venv active).
 PYTHON ?= python
 
-.PHONY: run test lint check docker-build docker-run
+.PHONY: run dashboard test lint check docker-build docker-run
 
 run:  # python -m riskplatform.pipeline   (or: riskplatform-run)
 	$(PYTHON) -m riskplatform.pipeline
+
+dashboard:  # python -m riskplatform.dashboard   (needs: pip install -e ".[dashboard]")
+	$(PYTHON) -m riskplatform.dashboard
 
 test:  # pytest
 	$(PYTHON) -m pytest
