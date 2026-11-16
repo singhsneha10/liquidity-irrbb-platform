@@ -147,5 +147,8 @@ def test_no_aws_access_keys_anywhere_in_the_repository():
 def test_only_example_variable_files_are_committed(folder):
     committable = {path.name for path in _tracked_and_new_files() if path.parent == folder}
     assert "terraform.tfvars.example" in committable
-    assert not any(name.endswith(".tfvars") or ".tfstate" in name for name in committable)
+    assert not any(
+        name.endswith((".tfvars", ".tfplan")) or ".tfstate" in name or name == "tfplan"
+        for name in committable
+    )  # state, real variable values and saved plans can all hold sensitive values
     assert ".terraform.lock.hcl" in committable  # provider versions are pinned

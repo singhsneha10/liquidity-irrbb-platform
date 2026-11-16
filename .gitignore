@@ -18,4 +18,7 @@ dist/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# Saved plans (terraform plan -out=tfplan) hold the planned values too, e.g. the alert email.
+tfplan
+*.tfplan
 crash.log

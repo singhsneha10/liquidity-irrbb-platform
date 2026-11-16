@@ -45,7 +45,7 @@ def test_configs_are_in_the_image():
 
 
 @pytest.mark.parametrize(
-    "excluded", [".env", "venv/", "data/", ".git/", "tests/", "*.tfstate", "*.tfvars"]
+    "excluded", [".env", "venv/", "data/", ".git/", "tests/", "*.tfstate", "*.tfvars", "tfplan"]
 )
 def test_secrets_and_local_data_stay_out_of_the_image(excluded):
     assert excluded in DOCKERIGNORE
