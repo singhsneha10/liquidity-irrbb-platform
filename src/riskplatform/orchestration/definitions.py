@@ -5,8 +5,8 @@ Materialise everything once:   dagster asset materialize --select "*" -m riskpla
 
 Each stage's output is a Dagster **asset**, so the UI shows lineage, run history and metadata:
 
-    raw_data -> raw_checks -> validated_data -> liquidity_metrics -> limit_status -> published_run
-                                             -> irrbb_results     ->
+    raw_data -> raw_checks -> validated_data -> liquidity_metrics -> limit_status -> daily_changes
+                                             -> irrbb_results     ->     -> tableau_extracts -> daily_report -> published_run
 
 Every asset calls the same function as the pipeline command (riskplatform.pipeline), so there
 is no second copy of any logic. The rules match the pipeline:
@@ -30,13 +30,17 @@ from pathlib import Path
 
 import dagster as dg
 
+from riskplatform.changes import describe_movement, run_changes
 from riskplatform.config import load_storage_config, parse_as_of
+from riskplatform.extracts import run_extracts
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import run_irrbb
 from riskplatform.limits import describe_alert, run_limits
 from riskplatform.metrics.run import run_metrics
+from riskplatform.notify import notify_run
 from riskplatform.pipeline import PipelineInputs, load_inputs
 from riskplatform.quality.run import run_quality
+from riskplatform.report import run_report
 from riskplatform.storage import make_client, publish_run
 from riskplatform.validation.check_raw import run_checks
 
@@ -53,6 +57,7 @@ class PipelineSettings(dg.ConfigurableResource):
     irrbb: str = "config/irrbb"
     storage: str = "config/storage.yaml"
     limits: str = "config/limits.yaml"
+    reporting: str = "config/reporting.yaml"
     data: str = "data"
     # Generate business days up to this date (YYYY-MM-DD or 'today'); empty: the config's
     # n_days. The schedule sets it to each run's scheduled date (see daily_schedule).
@@ -68,6 +73,7 @@ class PipelineSettings(dg.ConfigurableResource):
             Path(self.irrbb),
             as_of,
             limits_path=Path(self.limits),
+            reporting_path=Path(self.reporting),
         )
 
     @property
@@ -221,9 +227,52 @@ def limit_status(settings: PipelineSettings) -> dg.MaterializeResult:
     )
 
 
+@dg.asset(group_name=GROUP, deps=[limit_status], kinds={"python", "parquet"})
+def daily_changes(settings: PipelineSettings) -> dg.MaterializeResult:
+    """What changed since the business day before: limit movements and balance drivers."""
+    run = run_changes(settings.data_dir, _published_run_id(settings), settings.inputs().reporting)
+    summary = run.summary
+    moved = summary["limit_movements"]
+    return dg.MaterializeResult(
+        metadata={
+            "latest_date": summary["latest_date"],
+            "previous_date": summary["previous_date"] or "none (one day only)",
+            **{f"limits_{name}": n for name, n in summary["movements"].items()},
+            "limit_movements": dg.MetadataValue.md(
+                "\n".join(f"- {describe_movement(item)}" for item in moved) or "None."
+            ),
+            "path": dg.MetadataValue.path(str(run.out_dir)),
+        }
+    )
+
+
+@dg.asset(group_name=GROUP, deps=[daily_changes], kinds={"csv"})
+def tableau_extracts(settings: PipelineSettings) -> dg.MaterializeResult:
+    """Tableau-ready CSVs of the run, also copied to data/extracts/latest/ (a fixed folder)."""
+    run = run_extracts(settings.data_dir, _published_run_id(settings))
+    files = run.manifest["files"]
+    return dg.MaterializeResult(
+        metadata={
+            "files": len(files),
+            "rows": sum(f["rows"] for f in files.values()),
+            "path": dg.MetadataValue.path(str(run.out_dir)),
+            "latest": dg.MetadataValue.path(str(run.latest_dir)),
+        }
+    )
+
+
+@dg.asset(group_name=GROUP, deps=[tableau_extracts], kinds={"pdf"})
+def daily_report(settings: PipelineSettings) -> dg.MaterializeResult:
+    """The daily PDF report of the run (riskplatform.report)."""
+    run = run_report(settings.data_dir, _published_run_id(settings))
+    return dg.MaterializeResult(
+        metadata={"pages": run.pages, "path": dg.MetadataValue.path(str(run.path))}
+    )
+
+
 @dg.asset(
     group_name=GROUP,
-    deps=[limit_status],
+    deps=[daily_report],
     kinds={"s3"},
     retry_policy=dg.RetryPolicy(max_retries=3, delay=30, backoff=dg.Backoff.EXPONENTIAL),
 )
@@ -232,7 +281,10 @@ def published_run(settings: PipelineSettings) -> dg.MaterializeResult:
     storage = load_storage_config(settings.storage)
     run_id = _published_run_id(settings)
     if storage.backend != "s3":
-        return dg.MaterializeResult(metadata={"backend": "local", "run_id": run_id})
+        emailed = notify_run(settings.data_dir, run_id)  # only if alerts and a topic is set
+        return dg.MaterializeResult(
+            metadata={"backend": "local", "run_id": run_id, "limit_email_sent": emailed}
+        )
     data = settings.data_dir
     metrics = json.loads((data / "metrics" / run_id / "summary.json").read_text(encoding="utf-8"))
     irrbb = json.loads((data / "irrbb" / run_id / "summary.json").read_text(encoding="utf-8"))
@@ -243,6 +295,7 @@ def published_run(settings: PipelineSettings) -> dg.MaterializeResult:
         {"name": name, "status": "ok"} for name in ("raw_data", "raw_checks", "validated_data")
     ]
     record = publish_run(make_client(storage), storage, data, run_id, status, exit_code, stages)
+    emailed = notify_run(data, run_id)  # after publishing, as the pipeline does
     return dg.MaterializeResult(
         metadata={
             "backend": "s3",
@@ -250,6 +303,7 @@ def published_run(settings: PipelineSettings) -> dg.MaterializeResult:
             "status": status,
             "files": sum(record["files"].values()),
             "bucket": storage.s3.bucket,
+            "limit_email_sent": emailed,
         }
     )
 
@@ -261,6 +315,9 @@ ASSETS = [
     liquidity_metrics,
     irrbb_results,
     limit_status,
+    daily_changes,
+    tableau_extracts,
+    daily_report,
     published_run,
 ]
 

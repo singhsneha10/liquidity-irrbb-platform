@@ -1,0 +1,14 @@
+# Streamlit settings for the dashboard (riskplatform.dashboard). Read from the folder Streamlit
+# is started in, so start it from the repository root.
+
+[theme]
+# One light theme: the chart colours are chosen for a light surface (labelled simplification).
+base = "light"
+
+[browser]
+# No usage statistics are sent to Streamlit.
+gatherUsageStats = false
+
+[client]
+# The page needs no developer menu.
+toolbarMode = "viewer"

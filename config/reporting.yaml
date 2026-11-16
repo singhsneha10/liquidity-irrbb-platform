@@ -1,0 +1,9 @@
+# Reporting settings (Phase 8), validated by riskplatform.config.ReportingConfig.
+# Presentation choices only: nothing here changes a calculation.
+
+changes:
+  # "What changed since yesterday" (riskplatform.changes): how many balance-sheet drivers
+  # (entity, category and side, ranked by the size of their change in GBP) are listed in
+  # data/changes/<run_id>/summary.json and in the limit alert email. Every driver is always
+  # in balance_drivers.parquet.
+  top_drivers: 10

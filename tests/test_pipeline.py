@@ -17,7 +17,17 @@ from riskplatform.validation.check_raw import CheckResult
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config"
-ALL_STAGES = ["generate", "raw_checks", "quality", "metrics", "irrbb", "limits"]
+ALL_STAGES = [
+    "generate",
+    "raw_checks",
+    "quality",
+    "metrics",
+    "irrbb",
+    "limits",
+    "changes",
+    "extracts",
+    "report",
+]
 
 
 @pytest.fixture(scope="module")
@@ -77,19 +87,23 @@ def _loose_limits(tmp_path: Path, lcr: float) -> Path:
     return path
 
 
+def _limits_stage(result: PipelineResult) -> StageResult:
+    return next(stage for stage in result.stages if stage.name == "limits")
+
+
 def test_a_limit_warning_alone_makes_the_limits_stage_findings(inputs, tmp_path):
     """The EVE cap is set far away, so only the LCR floor decides. A floor at 100% leaves every
     limit ok; a floor at 95% of the lowest LCR uses exactly 95% of it: a warning (findings)."""
     relaxed = dataclasses.replace(inputs, limits=load_limits_config(_loose_limits(tmp_path, 1.0)))
     result = run_pipeline(relaxed, tmp_path / "relaxed")
-    assert result.stages[-1].status == "ok"
+    assert _limits_stage(result).status == "ok"
     table = pd.read_parquet(next((tmp_path / "relaxed" / "limits").glob("*/limits.parquet")))
     latest = table[(table["limit_name"] == "lcr") & (table["date"] == table["date"].max())]
 
     floor = float(0.95 * latest["actual"].min())  # a plain float: YAML cannot write numpy's
     tight = dataclasses.replace(inputs, limits=load_limits_config(_loose_limits(tmp_path, floor)))
     result = run_pipeline(tight, tmp_path / "tight")
-    assert result.stages[-1].status == "findings"
+    assert _limits_stage(result).status == "findings"
     summary = _json(next((tmp_path / "tight" / "limits").glob("*/summary.json")))
     assert summary["latest_status"]["breach"] == 0 and summary["latest_status"]["warning"] >= 1
     assert {alert["limit"] for alert in summary["alerts"]} == {"lcr"}

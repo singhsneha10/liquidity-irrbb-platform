@@ -67,7 +67,7 @@ def test_iam_has_no_wildcard_actions_and_only_one_wildcard_resource():
 
 def test_alerts_email_on_failures_but_not_on_findings():
     """Exit 1 (stopped or error) and crash codes such as 137 (out of memory) email; 0 (clean)
-    and 2 (findings: they wait for the Phase 8 limit alerts) do not."""
+    and 2 (findings: the task sends those itself, as one limit alert email) do not."""
     alerts = (PLATFORM / "alerts.tf").read_text(encoding="utf-8")
     rule = re.search(
         r'resource "aws_cloudwatch_event_rule" "run_failed" \{(.*?)\n\}', alerts, re.DOTALL
@@ -83,6 +83,17 @@ def test_alerts_email_on_failures_but_not_on_findings():
     assert not emails(0) and not emails(2)
     assert emails(1) and emails(137) and emails(143)
     assert 'stopCode   = ["TaskFailedToStart"]' in alerts  # no exit code at all: still alerts
+
+
+def test_the_task_may_publish_limit_alerts_to_the_alerts_topic_only():
+    iam = (PLATFORM / "iam.tf").read_text(encoding="utf-8")
+    task_policy = iam.split('data "aws_iam_policy_document" "task"')[1].split("\n}")[0]
+    publish = [s for s in _statements(task_policy) if '"sns:Publish"' in s]
+    assert len(publish) == 1, "the task role needs exactly one sns:Publish statement"
+    assert re.search(r"resources\s*=\s*\[aws_sns_topic\.alerts\.arn\]", publish[0])
+    assert "sns:" not in iam.split('data "aws_iam_policy_document" "task"')[0]  # nowhere else
+    ecs = (PLATFORM / "ecs.tf").read_text(encoding="utf-8")
+    assert '{ name = "RISKPLATFORM_ALERT_TOPIC_ARN", value = aws_sns_topic.alerts.arn }' in ecs
 
 
 def test_the_daily_task_runs_up_to_its_own_date():

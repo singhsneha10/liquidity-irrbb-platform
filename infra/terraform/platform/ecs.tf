@@ -50,6 +50,9 @@ resource "aws_ecs_task_definition" "pipeline" {
       { name = "RISKPLATFORM_STORAGE_BACKEND", value = "s3" },
       { name = "RISKPLATFORM_S3_BUCKET", value = aws_s3_bucket.results.bucket },
       { name = "AWS_DEFAULT_REGION", value = var.region },
+      # Limit alert email (riskplatform.notify): one message per run with a limit at warning
+      # or breach, to the same topic as the failure alerts. Unset elsewhere: nothing is sent.
+      { name = "RISKPLATFORM_ALERT_TOPIC_ARN", value = aws_sns_topic.alerts.arn },
     ]
     logConfiguration = {
       logDriver = "awslogs"
