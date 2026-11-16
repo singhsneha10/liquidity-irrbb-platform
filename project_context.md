@@ -3,11 +3,12 @@
 **Project:** Automated Liquidity & Interest Rate Risk Monitoring Platform
 **Goal:** A production-quality, end-to-end, deployed portfolio project that impresses senior
 people at banks such as JPMorgan (Risk Analyst roles). Business use comes later.
-**Last updated:** 2026-11-16. Phases 7 and 8 code complete. AWS deployment (7.5) is still
-pending, run by the author on the personal laptop. 8.1-8.7 were committed by the author step by
-step, and 8.8 (README, `docs/reporting.md`); the deployment checklist in this file was **not
-committed when this was written**.
-597 tests. Next: deploy, then Phase 9 (model validation).
+**Last updated:** 2026-11-16 (evening, personal PC). Phases 7 and 8 code complete, and **Phase 7
+is deployed to AWS** (checklist A-E done; see "Deployment checklist"). Only F is left: back up
+the Terraform state (author) and, when wanted, turn the daily schedule on (personal PC only).
+597 tests. Next: **Phase 9 (model validation)**, which needs no AWS and can be done on any PC.
+Uncommitted when written: this file and `infra/README.md` (approval rule, Windows push notes,
+`--provenance=false`). The plan-file ignores and their tests were committed in `e4f3fa3`.
 
 ## Working rules
 1. Think of the project as a whole; build step by step with the big picture in mind.
@@ -23,6 +24,12 @@ committed when this was written**.
 7. Never commit secrets. `.env` is ignored and untracked; secrets live in environment variables.
 8. Use the latest stable tool versions. Update this file at the end of the day. **The author
    commits and pushes; Claude never runs git commit or git push.**
+9. **AWS (decided 2026-11-16):** Claude may run AWS commands itself, **only on the personal PC**
+   (the only one with the Terraform state), but before anything that creates, changes or
+   destroys resources or costs money (`terraform apply`/`destroy`, `docker push`, `ecs run-task`,
+   schedule on) it shows the plan in plain words and waits for the author's "yes". Read-only
+   commands need no approval. The author wants AWS cost kept near zero: say what anything costs
+   (USD and roughly INR) before doing it.
 
 ## Big picture
 ```
@@ -220,7 +227,7 @@ data: hand-worked examples written before the code, and proofs against published
 | 4. Liquidity metrics | Done: Basel + UK PRA rulebooks (sourced), worked example, LCR, NSFR, maturity ladder, metrics run, methodology doc |
 | 5. Interest rate risk (IRRBB) | Done: Basel + UK PRA rulebooks (sourced), worked example (reproduces SRP31.92), shocks + UK floor, repricing gap, delta EVE + aggregation + outlier test, delta NII, IRRBB run, methodology doc; swap hedges added to the generator |
 | 6. Testing and hardening | Done: one-command pipeline with exit codes (6.1), shared logging + run log files (6.2), edge cases: missing curve now a STOP, missing book a WARNING, LCR 0/0, empty folders (6.3), limits moved to config (6.4), metrics/IRRBB about 6x faster, slow tests shortened (6.5), 98% branch coverage and 16/16 planted formula bugs caught (6.6). 423 tests, about 1 minute. |
-| 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). 490 tests, about 1.5 minutes. **Not yet applied to AWS** (no Terraform state on this PC; Terraform not installed): follow `infra/README.md`. |
+| 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). **Deployed 2026-11-16** from the personal PC: billing alarm, platform (27 resources), image `0.1.0`, one manual Fargate run (1 min 36 s, exit 2, 191 files to S3, limit email received). Daily schedule still **off**. |
 | 8. Alerts and dashboard | Done: limits config + utilisation (8.1), limits stage + S3 + query view + Dagster asset (8.2), SNS limit alert email (8.3), what changed since yesterday (8.4), Streamlit dashboard (8.5), Tableau CSV extracts (8.6), daily PDF report (8.7), README + `docs/reporting.md` + this file (8.8). 597 tests, 2 to 6 minutes (varies from run to run; not yet profiled). |
 | 9-10. Model validation, deploy | Not started |
 
@@ -229,6 +236,40 @@ data: hand-worked examples written before the code, and proofs against published
 only record of what exists in AWS (Git ignores them on purpose); running Terraform from another
 device without them would try to create everything again. Keep developing on either PC as usual
 (code goes through Git). The same commands, with more explanation, are in `infra/README.md`.
+
+**Result, 2026-11-16 (personal PC, with Claude running the commands and the author approving):**
+- Done: A (597 tests green, local run exit 2), B, C, D, E. Left: **F** (see below).
+- Account security (B): root user has MFA; the root user's only access key (it was in this PC's
+  `~/.aws/credentials`) was deactivated and **deleted** (verified). IAM Identity Center enabled
+  "with AWS Organizations" in eu-west-2; user `sneha-admin` with the `AdministratorAccess`
+  permission set (4-hour sessions); CLI profile `riskplatform` (SSO). Every new terminal:
+  `$env:AWS_PROFILE = "riskplatform"`; when expired: `aws sso login --profile riskplatform`.
+  The portal URL is on the IAM Identity Center dashboard (kept out of the repo).
+- Billing alarm (C): budget `riskplatform-monthly-cost`, 10 USD/month, alerts to the author's
+  email at 50/80/100% actual and 100% forecast. Account is on the **PAID** plan with **0 USD
+  credits**, so usage is charged to the card (monthly invoice; Indian cards may need an OTP or a
+  manual payment). Actual spend that evening: 0.00 USD.
+- Platform (D): 27 resources, nothing destroyed; schedule created DISABLED; SNS email
+  subscription confirmed.
+- Image and run (E): `riskplatform:0.1.0` in ECR (205 MB compressed); one manual Fargate run as of
+  2026-11-16 (76 business days): all nine stages, exit 2, 191 files to S3, latest.json updated,
+  query and PDF work with `--source s3`, and the limit alert email arrived ("2 breaches, 4
+  warnings"; BANK_US resolved since 2026-11-13). No failure email (correct for exit 2).
+- Cost estimate (London prices, about 88 INR/USD): now, idle, about 2 INR/month (image storage);
+  with the schedule on, about 0.08 USD = 7 INR/month (8-9 INR with 18% GST), creeping up by about
+  0.5 INR/month as results accumulate in S3.
+- Lessons (written into `infra/README.md`): on Windows, ECR login needs `cmd /c` for the pipe and
+  a throwaway Docker config without the credential helper (ECR tokens are too long for Windows
+  Credential Manager); quote `-chdir="$tf"` in PowerShell; build with `--provenance=false` so
+  ECR can scan the image (`0.1.0` has no scan result); saved plans (`tfplan`) are now ignored by
+  Git and Docker.
+
+**Still to do on the personal PC only (F):**
+- Back up `infra/terraform/billing/terraform.tfstate` and `infra/terraform/platform/terraform.tfstate`
+  somewhere private (author; not Git, not public storage).
+- Turn the schedule on when wanted (`schedule_enabled = true` in `platform/terraform.tfvars`,
+  plan, approve, apply): about 7-9 INR/month, one limit email per weekday while BANK_UK breaches.
+- Any future AWS change (new image tag, Terraform edit) also happens on the personal PC.
 
 **A. Get the code and prove it is green (nothing changes in the code tonight)**
 1. Commit and push this file from the work PC first (the 8.8 docs are already committed).
@@ -301,11 +342,25 @@ error to Claude); run Terraform from the work PC.
 "Removing everything" in `infra/README.md` (platform first, billing last).
 
 ## Next steps
-1. **Deploy Phases 7 and 8 tonight on the personal PC: follow "Deployment checklist" above.**
-   Paste each `terraform plan` for review before applying. Expect exit 2 and one limit alert
-   email per run (BANK_UK EVE breach).
-2. Decided before the schedule goes on (done): failure alerts for exit codes except 0 and 2;
-   limit alert email for findings; each run generates up to its own date (`--as-of today`).
+1. **Phase 9: model validation (next; any PC, no AWS).** Decided 2026-11-16: backtest the
+   retail deposit 30-day run-off rates (5% stable, 10% less stable; Basel LCR40.7 / LCR40.13,
+   UK LCR Art 24(1) / 25(1)) against **both** real public data (Federal Reserve H.8 weekly
+   deposits on FRED: all commercial banks and small banks, which carried the March 2023 run;
+   verify the series IDs on FRED first; save locally with provenance, do not commit) **and** a
+   planted synthetic stress episode (off by default, in its own `config/generator_stress.yaml`,
+   so default results do not change; keep the earlier-days-identical property). The synthetic
+   history alone is circular (balances drift +0.02%/day, vol 0.4%), hence the stress episode.
+   Proposed steps, **not yet approved by the author** (ask first): 9.1 scope and pass/fail
+   criteria written before any result; 9.2 fetch H.8; 9.3 stress episode in the generator;
+   9.4 backtest (rolling 30-day outflows, exceedances, worst, green/amber/red); 9.5 sensitivity
+   (LCR vs run-off, break-even run-off at 100% and at the 110% limit) and a simple benchmark
+   (99th-percentile 30-day outflow); 9.6 validation command writing every number to
+   `data/validation/`; 9.7 `docs/validation_report.md` in model-risk style; 9.8 this file. New
+   code in `src/riskplatform/model_validation/` (`validation/` already means data checks).
+   Check every citation (Fed H.8, PRA model-risk principles) against the official text.
+2. Phase 7 leftovers, **personal PC only**: back up the Terraform state; turn the schedule on when
+   wanted (see "Deployment checklist", F). Decided before (done): failure alerts for exit codes
+   except 0 and 2; limit alert email for findings; each run up to its own date (`--as-of today`).
 3. Open question: `config/limits.yaml` cites "UK SS31/15" for the 15% outlier test, while
    `docs/irrbb_methodology.md`, `docs/reporting.md` and the PDF cite UK ICAA 9.4A. Check the
    official text and make them agree.

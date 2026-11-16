@@ -19,8 +19,15 @@ EventBridge Scheduler (weekdays 06:00 London, off until you turn it on)
 AWS Budget -> email at 50%, 80%, 100% of actual spend and 100% of forecast
 ```
 
-**You run every command that creates or changes AWS resources.** Claude writes and checks the
-code (`terraform fmt`, `terraform validate` and CI) but never applies it.
+**Approval rule (decided 2026-11-16):** Claude may run these commands for you, on the personal
+PC only, but before anything that creates, changes or destroys AWS resources or costs money
+(`terraform apply`/`destroy`, `docker push`, `aws ecs run-task`, turning the schedule on) it
+shows the plan in plain words and waits for your "yes". Read-only commands (`terraform plan`,
+`aws sts get-caller-identity`, logs, `s3 ls`) need no approval. Claude never commits or pushes Git.
+
+**Status: deployed on 2026-11-16** from the personal PC (the only place with the Terraform state):
+billing alarm, platform (27 resources), image `0.1.0`, one manual run (exit 2, limit email
+received). The schedule is still **off** (step 5 not done).
 
 ## Cost
 
@@ -88,21 +95,48 @@ From the repository root (the tag must equal `image_tag`, and tags cannot be reu
 $repo = terraform -chdir=infra/terraform/platform output -raw ecr_repository_url
 $registry = $repo.Split("/")[0]
 aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $registry
-docker build -t "${repo}:0.1.0" .
+docker build --provenance=false -t "${repo}:0.1.0" .
 docker push "${repo}:0.1.0"
 ```
+
+`--provenance=false` pushes one plain image. Without it, Docker pushes an image index plus a
+provenance record, and ECR's basic scan-on-push cannot scan an index (image `0.1.0` was pushed
+that way on 2026-11-16, so it has no scan result; use the flag from `0.1.1` on).
+
+**On Windows (PowerShell 5.1 + Docker Desktop), the login line above fails** in two ways, both
+seen on 2026-11-16:
+1. `400 Bad Request`: PowerShell changes the encoding of text piped between programs. Pipe
+   through `cmd` instead: `cmd /c "aws ecr get-login-password --region eu-west-2 | docker login --username AWS --password-stdin $registry"`.
+2. `error storing credentials ... The stub received bad data`: ECR tokens are longer than
+   Windows Credential Manager allows, and Docker finds that helper on the PATH even when the
+   config names none. Log in and push with a throwaway Docker config and a PATH without
+   Docker's `resources\bin` (where the helpers are), then delete the folder (the token lasts
+   12 hours and only allows pushing and pulling images in this registry):
+   ```
+   $cfg = "$env:TEMP\docker-ecr"; New-Item -ItemType Directory -Force $cfg | Out-Null
+   '{"auths": {}}' | Set-Content -Encoding ascii "$cfg\config.json"
+   $docker = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
+   $oldPath = $env:PATH; $env:DOCKER_CONFIG = $cfg
+   $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notlike '*Docker\Docker\resources\bin*' }) -join ';'
+   [IO.File]::WriteAllText("$cfg\pw.txt", (aws ecr get-login-password --region eu-west-2))
+   cmd /c "`"$docker`" login --username AWS --password-stdin $registry < `"$cfg\pw.txt`""
+   & $docker push "${repo}:0.1.0"
+   $env:PATH = $oldPath; $env:DOCKER_CONFIG = $null; Remove-Item -Recurse -Force $cfg
+   ```
+   Also in PowerShell: quote Terraform's folder option, `-chdir="$tf"` (unquoted, `$tf` is
+   passed through literally).
 
 ## 4. Run it once by hand and check it
 
 ```
 $tf = "infra/terraform/platform"
-terraform -chdir=$tf output -raw run_task_network | Out-File -Encoding ascii network.json
-aws ecs run-task --cluster (terraform -chdir=$tf output -raw cluster) `
+terraform -chdir="$tf" output -raw run_task_network | Out-File -Encoding ascii network.json
+aws ecs run-task --cluster (terraform -chdir="$tf" output -raw cluster) `
   --launch-type FARGATE `
-  --task-definition (terraform -chdir=$tf output -raw task_definition) `
+  --task-definition (terraform -chdir="$tf" output -raw task_definition) `
   --network-configuration file://network.json
 aws logs tail /riskplatform/pipeline --follow       # the run's log as it happens
-$bucket = terraform -chdir=$tf output -raw bucket
+$bucket = terraform -chdir="$tf" output -raw bucket
 aws s3 cp "s3://$bucket/riskplatform/latest.json" -  # the run that just published
 Remove-Item network.json
 ```
