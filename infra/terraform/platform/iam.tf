@@ -80,6 +80,12 @@ data "aws_iam_policy_document" "task" {
     actions   = ["s3:GetObject", "s3:PutObject"]
     resources = ["${aws_s3_bucket.results.arn}/${var.s3_prefix}/*"]
   }
+
+  statement {
+    sid       = "PublishLimitAlerts" # the limit alert email (riskplatform.notify), one topic only
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "task" {

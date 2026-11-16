@@ -1,8 +1,11 @@
 # Email alerts when a run fails. The pipeline's exit codes reach ECS:
 #   0 = clean, 1 = stopped or error, 2 = findings (a breach or an IRRBB outlier).
 # Alerts go out for every exit code except 0 and 2: that is 1, and also crash codes the program
-# never sees, such as 137 (killed for running out of memory). Findings (2) send no email: they
-# are in the logs, S3 and latest.json, and become limit alerts in Phase 8.
+# never sees, such as 137 (killed for running out of memory). Findings (2) send no failure email.
+# Instead, the task itself publishes ONE limit alert email per run to this same topic when an
+# internal limit is at warning or breach (riskplatform.notify; the task role may publish to this
+# topic only, see iam.tf). A regulatory breach or IRRBB outlier always shows up there too,
+# because every limit is at least as strict as the matching regulatory test.
 # A task that never starts (e.g. the image is missing) has no exit code, so it has its own rule.
 # The first email from SNS asks you to confirm the subscription.
 

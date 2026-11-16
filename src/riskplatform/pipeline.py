@@ -26,7 +26,9 @@ All outputs go under --data (default data/): raw/, validated/, quality_runs/, me
 limits/,
 and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
 With backend s3 in --storage (config/storage.yaml, or RISKPLATFORM_STORAGE_BACKEND=s3), the
-run's outputs are then also copied to S3 under its run id (riskplatform.storage).
+run's outputs are then also copied to S3 under its run id (riskplatform.storage). Then, if any
+internal limit is at warning or breach and RISKPLATFORM_ALERT_TOPIC_ARN is set (in AWS), one
+limit alert email is sent through SNS (riskplatform.notify); otherwise the alerts stay logged.
 """
 
 import argparse
@@ -60,6 +62,7 @@ from riskplatform.irrbb.run import load_irrbb_regimes, run_irrbb
 from riskplatform.limits import describe_alert, run_limits
 from riskplatform.logs import log_to_file, setup_logging
 from riskplatform.metrics.run import load_liquidity_regimes, run_metrics
+from riskplatform.notify import notify_run
 from riskplatform.quality.run import run_quality
 from riskplatform.storage import make_client, publish_run
 from riskplatform.validation.check_raw import run_checks
@@ -246,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if storage.backend == "s3":  # after the log file is complete, so it is published whole
         publish(result, storage, args.data, log_path)
+    if any(stage.name == "limits" for stage in result.stages):  # after publishing, so the
+        notify_run(args.data, result.run_id)  # email's S3 location exists; sends only if alerts
     return result.exit_code
 
 

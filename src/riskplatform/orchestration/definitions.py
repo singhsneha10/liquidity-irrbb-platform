@@ -35,6 +35,7 @@ from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import run_irrbb
 from riskplatform.limits import describe_alert, run_limits
 from riskplatform.metrics.run import run_metrics
+from riskplatform.notify import notify_run
 from riskplatform.pipeline import PipelineInputs, load_inputs
 from riskplatform.quality.run import run_quality
 from riskplatform.storage import make_client, publish_run
@@ -232,7 +233,10 @@ def published_run(settings: PipelineSettings) -> dg.MaterializeResult:
     storage = load_storage_config(settings.storage)
     run_id = _published_run_id(settings)
     if storage.backend != "s3":
-        return dg.MaterializeResult(metadata={"backend": "local", "run_id": run_id})
+        emailed = notify_run(settings.data_dir, run_id)  # only if alerts and a topic is set
+        return dg.MaterializeResult(
+            metadata={"backend": "local", "run_id": run_id, "limit_email_sent": emailed}
+        )
     data = settings.data_dir
     metrics = json.loads((data / "metrics" / run_id / "summary.json").read_text(encoding="utf-8"))
     irrbb = json.loads((data / "irrbb" / run_id / "summary.json").read_text(encoding="utf-8"))
@@ -243,6 +247,7 @@ def published_run(settings: PipelineSettings) -> dg.MaterializeResult:
         {"name": name, "status": "ok"} for name in ("raw_data", "raw_checks", "validated_data")
     ]
     record = publish_run(make_client(storage), storage, data, run_id, status, exit_code, stages)
+    emailed = notify_run(data, run_id)  # after publishing, as the pipeline does
     return dg.MaterializeResult(
         metadata={
             "backend": "s3",
@@ -250,6 +255,7 @@ def published_run(settings: PipelineSettings) -> dg.MaterializeResult:
             "status": status,
             "files": sum(record["files"].values()),
             "bucket": storage.s3.bucket,
+            "limit_email_sent": emailed,
         }
     )
 
