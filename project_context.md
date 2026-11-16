@@ -5,7 +5,8 @@
 people at banks such as JPMorgan (Risk Analyst roles). Business use comes later.
 **Last updated:** 2026-11-16. Phases 7 and 8 code complete. AWS deployment (7.5) is still
 pending, run by the author on the personal laptop. 8.1-8.7 were committed by the author step by
-step; 8.8 (README, `docs/reporting.md`, this file) was **not committed when this was written**.
+step, and 8.8 (README, `docs/reporting.md`); the deployment checklist in this file was **not
+committed when this was written**.
 597 tests. Next: deploy, then Phase 9 (model validation).
 
 ## Working rules
@@ -223,12 +224,86 @@ data: hand-worked examples written before the code, and proofs against published
 | 8. Alerts and dashboard | Done: limits config + utilisation (8.1), limits stage + S3 + query view + Dagster asset (8.2), SNS limit alert email (8.3), what changed since yesterday (8.4), Streamlit dashboard (8.5), Tableau CSV extracts (8.6), daily PDF report (8.7), README + `docs/reporting.md` + this file (8.8). 597 tests, 2 to 6 minutes (varies from run to run; not yet profiled). |
 | 9-10. Model validation, deploy | Not started |
 
+## Deployment checklist (personal PC; decided 2026-11-16)
+**All Terraform work happens on the personal PC only.** Its `terraform.tfstate` files are the
+only record of what exists in AWS (Git ignores them on purpose); running Terraform from another
+device without them would try to create everything again. Keep developing on either PC as usual
+(code goes through Git). The same commands, with more explanation, are in `infra/README.md`.
+
+**A. Get the code and prove it is green (nothing changes in the code tonight)**
+1. Commit and push this file from the work PC first (the 8.8 docs are already committed).
+2. On the personal PC: `git pull` on branch `sneha` (clone first if needed).
+3. Create or refresh the venv, then run the checks; all three must pass before going on:
+   ```
+   py -3.12 -m venv venv              # only if there is no venv yet
+   .\venv\Scripts\Activate.ps1
+   pip install -e ".[dev,orchestration,dashboard]"
+   pytest; ruff check .; ruff format --check .      # 597 tests, 2 to 6 minutes
+   riskplatform-run                                 # local run: expect exit code 2 (findings)
+   ```
+   If anything fails here, stop and bring the output to Claude; do not "fix" it on the spot.
+
+**B. One-time setup (`infra/README.md` section 0)**
+4. Install the tools, then restart the terminal (Docker Desktop needs a Windows restart the
+   first time): `winget install Hashicorp.Terraform`, `winget install Amazon.AWSCLI`,
+   `winget install Docker.DockerDesktop`. Check: `terraform -version`, `aws --version`,
+   `docker version`.
+5. AWS console as the root user: turn on root MFA; set up IAM Identity Center with a user for
+   yourself (`AdministratorAccess` permission set). No access keys, ever.
+6. Sign in from the terminal (region `eu-west-2`):
+   ```
+   aws configure sso --profile riskplatform
+   aws sso login --profile riskplatform
+   $env:AWS_PROFILE = "riskplatform"      # in every new terminal
+   aws sts get-caller-identity             # shows your account id
+   ```
+
+**C. Billing alarm first (`infra/README.md` section 1)**
+7. In `infra/terraform/billing`: `Copy-Item terraform.tfvars.example terraform.tfvars`, put your
+   email in `terraform.tfvars`, then `terraform init` and `terraform plan`.
+   **Paste the plan to Claude before applying.** Expected: exactly one `aws_budgets_budget`.
+8. `terraform apply` (type `yes`).
+
+**D. The platform (`infra/README.md` section 2)**
+9. In `infra/terraform/platform`: copy the example the same way; set your email, keep
+   `image_tag = "0.1.0"` and `schedule_enabled = false`. Then `terraform init`, `terraform plan`.
+   **Paste the plan to Claude before applying.** Expected: bucket and its settings, ECR, log
+   group, 3 IAM roles + policies (the task's includes `sns:Publish` on the alerts topic only),
+   ECS cluster and task definition (with `RISKPLATFORM_ALERT_TOPIC_ARN`), the schedule
+   (disabled), SNS topic, email subscription, EventBridge rules. Nothing destroyed.
+10. `terraform apply`, then `terraform output`.
+11. **Confirm the SNS subscription** from the email AWS sends ("AWS Notification - Subscription
+    Confirmation"); without the click, no alert or limit email ever arrives.
+
+**E. Image, one manual run, checks (`infra/README.md` sections 3 and 4)**
+12. Start Docker Desktop. From the repository root, build and push tag `0.1.0` (it must equal
+    `image_tag`; tags are immutable, so a rebuild needs a new tag, see "Releasing a new version").
+13. Run the task once by hand (`aws ecs run-task ...` from `infra/README.md` section 4) and watch
+    `aws logs tail /riskplatform/pipeline --follow`. Expected: every stage including changes,
+    extracts and report, then `Pipeline FINDINGS (exit code 2)`.
+14. Check: `aws s3 cp "s3://$bucket/riskplatform/latest.json" -` shows the run;
+    `python -m riskplatform.query --source s3 --tables` lists the views (with
+    `$env:RISKPLATFORM_S3_BUCKET = $bucket`); `riskplatform-report --source s3` writes the PDF;
+    **one limit alert email** arrives (subject `riskplatform limits <date>: 2 breaches, ...`,
+    with the "Since ..." section). No failure email (exit 2 is not a failure).
+
+**F. Turn the schedule on and back up the state (`infra/README.md` section 5)**
+15. Only after E worked: `schedule_enabled = true` in `platform/terraform.tfvars`, `terraform plan`
+    (expected: only the schedule changes), `terraform apply`. Runs weekdays 06:00 London.
+16. Back up `infra/terraform/billing/terraform.tfstate` and
+    `infra/terraform/platform/terraform.tfstate` somewhere private (not Git, not a public
+    drive): they are needed to change or remove anything later.
+
+**Never tonight:** commit `terraform.tfvars`, `*.tfstate` or `.terraform/` (Git ignores them;
+`tests/test_infra.py` checks); create access keys; edit code to make something work (bring the
+error to Claude); run Terraform from the work PC.
+**If something goes wrong:** copy the exact command and output to Claude. To remove everything:
+"Removing everything" in `infra/README.md` (platform first, billing last).
+
 ## Next steps
-1. **Deploy Phases 7 and 8** (the author runs these, on the personal laptop): install Terraform,
-   apply `billing/` first, then `platform/` (now also `sns:Publish` for the task and the topic
-   ARN on it), build and push the image (now includes ReportLab), one manual run, then
-   `schedule_enabled = true`. Paste each `terraform plan` for review before applying. Expect
-   exit 2 and one limit alert email per run (BANK_UK EVE breach).
+1. **Deploy Phases 7 and 8 tonight on the personal PC: follow "Deployment checklist" above.**
+   Paste each `terraform plan` for review before applying. Expect exit 2 and one limit alert
+   email per run (BANK_UK EVE breach).
 2. Decided before the schedule goes on (done): failure alerts for exit codes except 0 and 2;
    limit alert email for findings; each run generates up to its own date (`--as-of today`).
 3. Open question: `config/limits.yaml` cites "UK SS31/15" for the 15% outlier test, while
