@@ -182,8 +182,13 @@ def test_pipeline_emails_once_with_the_runs_alerts(sns, tmp_path, monkeypatch):
     assert summary["alerts"], "precondition: the test bank should have limit alerts"
     (message,) = received()  # exactly one email for the run
     assert code == 2
-    sent = [line[2:] for line in message["Message"].splitlines() if line.startswith("- ")]
+    alerts_part, since_part = message["Message"].split("\nSince ", 1)  # then what changed
+    sent = [line[2:] for line in alerts_part.splitlines() if line.startswith("- ")]
     assert sent == [describe_alert(alert) for alert in summary["alerts"]]
+    changes = json.loads((data / "changes" / run_id / "summary.json").read_text(encoding="utf-8"))
+    assert since_part.startswith(f"{changes['previous_date']}:")
+    assert len(changes["top_drivers"]) == 10  # config/reporting.yaml
+    assert since_part.count(" = volume ") == 10
     assert message["Subject"].startswith(f"riskplatform limits {summary['as_of']}:")
 
 

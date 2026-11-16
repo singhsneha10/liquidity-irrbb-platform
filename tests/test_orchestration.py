@@ -20,6 +20,7 @@ ORDER = [
     "liquidity_metrics",
     "irrbb_results",
     "limit_status",
+    "daily_changes",
     "published_run",
 ]
 BUCKET, REGION = "riskplatform-test", "eu-west-2"
@@ -72,7 +73,8 @@ def test_lineage_follows_the_pipeline_order():
         "liquidity_metrics": {"validated_data"},
         "irrbb_results": {"validated_data"},
         "limit_status": {"liquidity_metrics", "irrbb_results"},
-        "published_run": {"limit_status"},
+        "daily_changes": {"limit_status"},
+        "published_run": {"daily_changes"},
     }
 
 

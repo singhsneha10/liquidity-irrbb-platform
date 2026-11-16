@@ -5,8 +5,8 @@ Materialise everything once:   dagster asset materialize --select "*" -m riskpla
 
 Each stage's output is a Dagster **asset**, so the UI shows lineage, run history and metadata:
 
-    raw_data -> raw_checks -> validated_data -> liquidity_metrics -> limit_status -> published_run
-                                             -> irrbb_results     ->
+    raw_data -> raw_checks -> validated_data -> liquidity_metrics -> limit_status -> daily_changes
+                                             -> irrbb_results     ->                -> published_run
 
 Every asset calls the same function as the pipeline command (riskplatform.pipeline), so there
 is no second copy of any logic. The rules match the pipeline:
@@ -30,6 +30,7 @@ from pathlib import Path
 
 import dagster as dg
 
+from riskplatform.changes import describe_movement, run_changes
 from riskplatform.config import load_storage_config, parse_as_of
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import run_irrbb
@@ -54,6 +55,7 @@ class PipelineSettings(dg.ConfigurableResource):
     irrbb: str = "config/irrbb"
     storage: str = "config/storage.yaml"
     limits: str = "config/limits.yaml"
+    reporting: str = "config/reporting.yaml"
     data: str = "data"
     # Generate business days up to this date (YYYY-MM-DD or 'today'); empty: the config's
     # n_days. The schedule sets it to each run's scheduled date (see daily_schedule).
@@ -69,6 +71,7 @@ class PipelineSettings(dg.ConfigurableResource):
             Path(self.irrbb),
             as_of,
             limits_path=Path(self.limits),
+            reporting_path=Path(self.reporting),
         )
 
     @property
@@ -222,9 +225,28 @@ def limit_status(settings: PipelineSettings) -> dg.MaterializeResult:
     )
 
 
+@dg.asset(group_name=GROUP, deps=[limit_status], kinds={"python", "parquet"})
+def daily_changes(settings: PipelineSettings) -> dg.MaterializeResult:
+    """What changed since the business day before: limit movements and balance drivers."""
+    run = run_changes(settings.data_dir, _published_run_id(settings), settings.inputs().reporting)
+    summary = run.summary
+    moved = summary["limit_movements"]
+    return dg.MaterializeResult(
+        metadata={
+            "latest_date": summary["latest_date"],
+            "previous_date": summary["previous_date"] or "none (one day only)",
+            **{f"limits_{name}": n for name, n in summary["movements"].items()},
+            "limit_movements": dg.MetadataValue.md(
+                "\n".join(f"- {describe_movement(item)}" for item in moved) or "None."
+            ),
+            "path": dg.MetadataValue.path(str(run.out_dir)),
+        }
+    )
+
+
 @dg.asset(
     group_name=GROUP,
-    deps=[limit_status],
+    deps=[daily_changes],
     kinds={"s3"},
     retry_policy=dg.RetryPolicy(max_retries=3, delay=30, backoff=dg.Backoff.EXPONENTIAL),
 )
@@ -267,6 +289,7 @@ ASSETS = [
     liquidity_metrics,
     irrbb_results,
     limit_status,
+    daily_changes,
     published_run,
 ]
 

@@ -12,7 +12,8 @@ disk. So S3 uses the standard pattern for batch jobs:
 
 Layout under s3://<bucket>/<prefix>/:
     raw/<run_id>/  quality_runs/<run_id>/  validated/<run_id>/  metrics/<run_id>/
-    irrbb/<run_id>/  limits/<run_id>/  logs/<log file>  runs/<run_id>.json  latest.json
+    irrbb/<run_id>/  limits/<run_id>/  changes/<run_id>/  logs/<log file>  runs/<run_id>.json
+    latest.json
 
 Credentials are never in code or config: boto3 finds them itself (an AWS profile on a PC, the
 task's IAM role in AWS).
@@ -87,6 +88,7 @@ def publish_run(
     upload(data_dir / "metrics" / run_id, "metrics")
     upload(data_dir / "irrbb" / run_id, "irrbb")
     upload(data_dir / "limits" / run_id, "limits")
+    upload(data_dir / "changes" / run_id, "changes")
     if log_file is not None and Path(log_file).exists():
         client.upload_file(str(log_file), bucket, f"{prefix}/logs/{Path(log_file).name}")
         uploaded["logs"] = 1

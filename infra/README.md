@@ -118,8 +118,9 @@ python -m riskplatform.query --source s3 "SELECT regime, entity, eve_risk / tier
 
 The synthetic bank's BANK_UK is an IRRBB outlier and breaches the EVE limit, so expect **exit
 code 2** (findings) and **one limit alert email**, subject `riskplatform limits <date>: ...`, with
-one line per limit at warning or breach (breaches first). It repeats every run while a limit
-stays there. No failure email is sent for exit code 2: failure emails are for exit code 1 (a
+one line per limit at warning or breach (breaches first), then what changed since the business
+day before: limits whose status moved, and the largest balance moves split into volume and FX.
+It repeats every run while a limit stays there. No failure email is sent for exit code 2: failure emails are for exit code 1 (a
 check stopped the run, or an error) or a crash such as 137 (out of memory). To see the failure
 alert work, make a run fail on purpose, for example by running a task whose image tag does not
 exist (it fails to start).

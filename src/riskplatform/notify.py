@@ -13,8 +13,10 @@ email address, receive it.
 - A run with no alerts sends nothing. A failure to send raises, so the run exits 1 and the
   failure alert (any exit code except 0 and 2) tells you: a limit alert is never lost silently.
 
-The email repeats every run while a limit stays at warning or breach (labelled choice: a
-"what changed since yesterday" view comes in step 8.4).
+The email repeats every run while a limit stays at warning or breach (labelled choice), so it
+also says what changed since the business day before (riskplatform.changes, when the run has
+data/changes/<run_id>/summary.json): limits whose status moved, and the largest balance moves
+split into volume and FX.
 """
 
 import json
@@ -24,6 +26,7 @@ from pathlib import Path
 
 import boto3
 
+from riskplatform.changes import describe_movement
 from riskplatform.limits import describe_alert
 
 logger = logging.getLogger(__name__)
@@ -36,8 +39,39 @@ def _count(number: int, word: str, plural: str) -> str:
     return f"{number} {word if number == 1 else plural}"
 
 
-def compose_limit_email(summary: dict) -> tuple[str, str]:
-    """The subject and body of the limit alert email for one run's limits summary."""
+def _signed(value: float) -> str:
+    return f"{value:+,.1f}"
+
+
+def describe_driver(driver: dict) -> str:
+    """One line, e.g. 'BANK_UK corporate_loans (asset): +120.3 = volume +100.0, FX +20.3'."""
+    return (
+        f"{driver['entity']} {driver['category']} ({driver['side']}): "
+        f"{_signed(driver['change_gbp'])} = volume {_signed(driver['volume_gbp'])}, "
+        f"FX {_signed(driver['fx_gbp'])}"
+    )
+
+
+def changes_section(changes: dict) -> list[str]:
+    """What changed since the business day before, as email lines (riskplatform.changes)."""
+    previous = changes["previous_date"]
+    if previous is None:
+        return ["No earlier business day in this run to compare with."]
+    moved = changes["limit_movements"]
+    lines = [f"Since {previous}:"]
+    if moved:
+        lines += [f"- {describe_movement(item)}" for item in moved]
+    else:
+        lines.append("- No internal limit changed status.")
+    if changes["top_drivers"]:
+        lines += ["", "Largest balance-sheet moves since then (GBP mn, on balance sheet only):"]
+        lines += [f"- {describe_driver(driver)}" for driver in changes["top_drivers"]]
+    return lines
+
+
+def compose_limit_email(summary: dict, changes: dict | None = None) -> tuple[str, str]:
+    """The subject and body of the limit alert email for one run's limits summary, with what
+    changed since the day before if the run's changes summary is given."""
     alerts = summary["alerts"]
     breaches = sum(alert["status"] == "breach" for alert in alerts)
     warnings = len(alerts) - breaches
@@ -56,6 +90,7 @@ def compose_limit_email(summary: dict) -> tuple[str, str]:
         "",
         *(f"- {describe_alert(alert)}" for alert in alerts),  # in the stage's order: breaches first
         "",
+        *([*changes_section(changes), ""] if changes else []),
         levels,
         "These are the bank's own limits (config/limits.yaml), not the regulatory minimums.",
         f"Details: limits/{run_id}/summary.json (in data/ and, in AWS, in the results bucket).",
@@ -72,7 +107,9 @@ def region_of(topic_arn: str) -> str:
     return parts[3]
 
 
-def send_limit_alerts(summary: dict, topic_arn: str | None, client=None) -> bool:
+def send_limit_alerts(
+    summary: dict, topic_arn: str | None, client=None, changes: dict | None = None
+) -> bool:
     """Publish one email if the summary has alerts and a topic is set; True if sent."""
     alerts = summary["alerts"]
     if not alerts:
@@ -80,7 +117,7 @@ def send_limit_alerts(summary: dict, topic_arn: str | None, client=None) -> bool
     if not topic_arn:
         logger.info("%d limit alerts not emailed: %s is not set", len(alerts), ALERT_TOPIC_ENV)
         return False
-    subject, body = compose_limit_email(summary)
+    subject, body = compose_limit_email(summary, changes)
     client = client or boto3.client("sns", region_name=region_of(topic_arn))
     client.publish(TopicArn=topic_arn, Subject=subject, Message=body)
     logger.info("Emailed %d limit alerts (%s) to %s", len(alerts), subject, topic_arn)
@@ -88,8 +125,13 @@ def send_limit_alerts(summary: dict, topic_arn: str | None, client=None) -> bool
 
 
 def notify_run(data_dir: str | Path, run_id: str, env: dict[str, str] | None = None) -> bool:
-    """Send the limit alert email for one run's limits summary (see send_limit_alerts)."""
+    """Send the limit alert email for one run's limits summary (see send_limit_alerts), with the
+    run's changes summary if it has one."""
     env = dict(os.environ) if env is None else env
     path = Path(data_dir) / "limits" / run_id / "summary.json"
     summary = json.loads(path.read_text(encoding="utf-8"))
-    return send_limit_alerts(summary, env.get(ALERT_TOPIC_ENV))
+    changes_path = Path(data_dir) / "changes" / run_id / "summary.json"
+    changes = (
+        json.loads(changes_path.read_text(encoding="utf-8")) if changes_path.exists() else None
+    )
+    return send_limit_alerts(summary, env.get(ALERT_TOPIC_ENV), changes=changes)

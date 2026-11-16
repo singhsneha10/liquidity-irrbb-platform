@@ -706,3 +706,18 @@ class LimitsConfig(_Strict):
 def load_limits_config(path: str | Path) -> LimitsConfig:
     """Read a YAML file and return a validated LimitsConfig."""
     return LimitsConfig.model_validate(_read_yaml(path))
+
+
+class ChangesSettings(_Strict):
+    top_drivers: int = Field(gt=0)  # balance-sheet drivers listed in the summary and the email
+
+
+class ReportingConfig(_Strict):
+    """Reporting settings (config/reporting.yaml); presentation only, no calculation."""
+
+    changes: ChangesSettings
+
+
+def load_reporting_config(path: str | Path) -> ReportingConfig:
+    """Read a YAML file and return a validated ReportingConfig."""
+    return ReportingConfig.model_validate(_read_yaml(path))

@@ -1,5 +1,5 @@
 """The whole daily pipeline in one command: generate -> raw checks -> quality -> metrics ->
-IRRBB -> limits.
+IRRBB -> limits -> changes.
 
 Run with:  python -m riskplatform.pipeline          (or: riskplatform-run, or: make run)
            python -m riskplatform.pipeline --config config/generator_real.yaml
@@ -22,13 +22,16 @@ Exit codes, so a scheduler can tell a broken run from a run that found something
      IRRBB outlier, or an internal limit (config/limits.yaml) is at warning or breach on the
      latest date. The numbers were produced; they need attention, not a rerun.
 
+The changes stage compares the latest day with the one before (riskplatform.changes, "what
+changed since yesterday"); it reports, so it is always ok and never changes the exit code.
+
 All outputs go under --data (default data/): raw/, validated/, quality_runs/, metrics/, irrbb/,
-limits/,
-and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
+limits/, changes/ and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
 With backend s3 in --storage (config/storage.yaml, or RISKPLATFORM_STORAGE_BACKEND=s3), the
 run's outputs are then also copied to S3 under its run id (riskplatform.storage). Then, if any
 internal limit is at warning or breach and RISKPLATFORM_ALERT_TOPIC_ARN is set (in AWS), one
-limit alert email is sent through SNS (riskplatform.notify); otherwise the alerts stay logged.
+limit alert email is sent through SNS (riskplatform.notify), with what changed since the day
+before; otherwise the alerts stay logged.
 """
 
 import argparse
@@ -41,6 +44,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
 
+from riskplatform.changes import run_changes
 from riskplatform.config import (
     AS_OF_HELP,
     GeneratorConfig,
@@ -49,11 +53,13 @@ from riskplatform.config import (
     LimitsConfig,
     LiquidityRules,
     QualityConfig,
+    ReportingConfig,
     StorageConfig,
     load_generator_config,
     load_ladder_config,
     load_limits_config,
     load_quality_config,
+    load_reporting_config,
     load_storage_config,
     parse_as_of,
 )
@@ -110,6 +116,7 @@ class PipelineInputs:
     ladder: LadderConfig
     irrbb: dict[str, IrrbbRules]
     limits: LimitsConfig
+    reporting: ReportingConfig
 
 
 def load_inputs(
@@ -119,6 +126,7 @@ def load_inputs(
     irrbb_dir: Path,
     as_of: date | None = None,
     limits_path: Path = Path("config/limits.yaml"),
+    reporting_path: Path = Path("config/reporting.yaml"),
 ) -> PipelineInputs:
     """Load and validate every config first, so a bad config fails before any data is written.
 
@@ -132,6 +140,7 @@ def load_inputs(
         ladder=load_ladder_config(liquidity_dir / "ladder.yaml"),
         irrbb=load_irrbb_regimes(irrbb_dir),
         limits=load_limits_config(limits_path),
+        reporting=load_reporting_config(reporting_path),
     )
 
 
@@ -186,6 +195,15 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
         )
         return ("findings" if run.alerts else "ok"), f"{detail}; {run.out_dir}"
 
+    def changes_step() -> tuple[StageStatus, str]:
+        run = run_changes(data_dir, seen["run_id"], inputs.reporting)
+        summary = run.summary
+        if summary["previous_date"] is None:
+            return "ok", f"one day only, nothing to compare; {run.out_dir}"
+        moved = ", ".join(f"{n} {name}" for name, n in summary["movements"].items() if n)
+        since = f"{summary['latest_date']} against {summary['previous_date']}"
+        return "ok", f"limits {moved or 'none'} ({since}); {run.out_dir}"
+
     steps: list[tuple[str, Step]] = [
         ("generate", generate_step),
         ("raw_checks", raw_checks_step),
@@ -193,6 +211,7 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
         ("metrics", metrics_step),
         ("irrbb", irrbb_step),
         ("limits", limits_step),
+        ("changes", changes_step),
     ]
     stages: list[StageResult] = []
     for name, step in steps:
@@ -215,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--liquidity", type=Path, default=Path("config/liquidity"))
     parser.add_argument("--irrbb", type=Path, default=Path("config/irrbb"))
     parser.add_argument("--limits", type=Path, default=Path("config/limits.yaml"))
+    parser.add_argument("--reporting", type=Path, default=Path("config/reporting.yaml"))
     parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--storage", type=Path, default=Path("config/storage.yaml"))
     parser.add_argument("--as-of", type=parse_as_of, help=AS_OF_HELP)
@@ -222,7 +242,13 @@ def main(argv: list[str] | None = None) -> int:
 
     setup_logging()
     inputs = load_inputs(
-        args.config, args.quality, args.liquidity, args.irrbb, args.as_of, args.limits
+        args.config,
+        args.quality,
+        args.liquidity,
+        args.irrbb,
+        args.as_of,
+        args.limits,
+        args.reporting,
     )
     storage = load_storage_config(args.storage)  # checked before any data is written
     log_path = args.data / "logs" / f"pipeline-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.log"
