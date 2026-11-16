@@ -35,7 +35,8 @@ def run(tmp_path_factory):
     small = loaded.generator.model_validate({**loaded.generator.model_dump(), "n_days": 2})
     data_dir = tmp_path_factory.mktemp("extracts")
     result = run_pipeline(dataclasses.replace(loaded, generator=small), data_dir)
-    assert result.stages[-1].name == "extracts" and result.stages[-1].status == "ok"
+    stage = next(stage for stage in result.stages if stage.name == "extracts")
+    assert stage.status == "ok"
     return data_dir, result.run_id
 
 

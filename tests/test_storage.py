@@ -111,6 +111,7 @@ def test_published_run_is_uploaded_under_its_id_and_becomes_latest(s3, storage, 
         "limits",
         "changes",
         "extracts",
+        "reports",
     ):
         assert any(k.startswith(f"riskplatform/{folder}/{run_id}/") for k in keys), folder
     assert f"riskplatform/validated/{run_id}/_run.json" in keys

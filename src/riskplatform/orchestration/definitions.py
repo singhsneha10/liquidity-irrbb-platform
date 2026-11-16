@@ -6,7 +6,7 @@ Materialise everything once:   dagster asset materialize --select "*" -m riskpla
 Each stage's output is a Dagster **asset**, so the UI shows lineage, run history and metadata:
 
     raw_data -> raw_checks -> validated_data -> liquidity_metrics -> limit_status -> daily_changes
-                                             -> irrbb_results     ->     -> tableau_extracts -> published_run
+                                             -> irrbb_results     ->     -> tableau_extracts -> daily_report -> published_run
 
 Every asset calls the same function as the pipeline command (riskplatform.pipeline), so there
 is no second copy of any logic. The rules match the pipeline:
@@ -40,6 +40,7 @@ from riskplatform.metrics.run import run_metrics
 from riskplatform.notify import notify_run
 from riskplatform.pipeline import PipelineInputs, load_inputs
 from riskplatform.quality.run import run_quality
+from riskplatform.report import run_report
 from riskplatform.storage import make_client, publish_run
 from riskplatform.validation.check_raw import run_checks
 
@@ -260,9 +261,18 @@ def tableau_extracts(settings: PipelineSettings) -> dg.MaterializeResult:
     )
 
 
+@dg.asset(group_name=GROUP, deps=[tableau_extracts], kinds={"pdf"})
+def daily_report(settings: PipelineSettings) -> dg.MaterializeResult:
+    """The daily PDF report of the run (riskplatform.report)."""
+    run = run_report(settings.data_dir, _published_run_id(settings))
+    return dg.MaterializeResult(
+        metadata={"pages": run.pages, "path": dg.MetadataValue.path(str(run.path))}
+    )
+
+
 @dg.asset(
     group_name=GROUP,
-    deps=[tableau_extracts],
+    deps=[daily_report],
     kinds={"s3"},
     retry_policy=dg.RetryPolicy(max_retries=3, delay=30, backoff=dg.Backoff.EXPONENTIAL),
 )
@@ -307,6 +317,7 @@ ASSETS = [
     limit_status,
     daily_changes,
     tableau_extracts,
+    daily_report,
     published_run,
 ]
 

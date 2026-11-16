@@ -17,15 +17,18 @@ dependencies = [
   "duckdb>=2.0",
   "openpyxl>=3.1",
   "boto3>=1.44",
+  "reportlab>=5.1",
 ]
 
 [project.scripts]
 riskplatform-run = "riskplatform.pipeline:main"
 riskplatform-dashboard = "riskplatform.dashboard.__main__:main"
 riskplatform-extracts = "riskplatform.extracts:main"
+riskplatform-report = "riskplatform.report:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov", "ruff", "moto[s3]>=5.2", "dagster>=1.13", "streamlit>=1.67"]
+dev = ["pytest>=8", "pytest-cov", "ruff", "moto[s3]>=5.2", "dagster>=1.13", "streamlit>=1.67",
+       "pypdf>=7.1"]
 # Dagster's web UI (dagster dev), for running and watching the pipeline locally.
 orchestration = ["dagster>=1.13", "dagster-webserver>=1.13"]
 # The Streamlit dashboard (riskplatform-dashboard); not in the pipeline's Docker image.

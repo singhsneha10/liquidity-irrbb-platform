@@ -26,6 +26,7 @@ ALL_STAGES = [
     "limits",
     "changes",
     "extracts",
+    "report",
 ]
 
 
