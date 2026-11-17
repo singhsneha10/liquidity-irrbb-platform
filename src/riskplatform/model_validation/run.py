@@ -9,11 +9,12 @@ Steps:
    quality layer, so T3 uses validated data, as the report says. Built fresh, not read from
    data/validated/ (which holds whatever ran last), so the same configs give the same numbers.
 3. Build the stressed bank (config/generator_stress.yaml) for T2.
-4. Run T1 (backtest), T2 (detection check), T3 (sensitivity) and T4 (benchmark), and rate them.
+4. Run T1 (backtest), T2 (detection check), T3 (sensitivity) and T4 (benchmark), and rate them;
+   and T5, the LCR under documented single-bank runs (case study, report only, no rating).
 
 Writes data/validation/<UTC time>/: results.json (every number, the ratings, the H.8 hash and
 the quality run id), t1_spells.csv (every spell above the stable rate, for the H.8 notes check)
-and t3_sensitivity.csv. Exit codes, as for the pipeline: 0 every rating green, 2 any amber, red
+t3_sensitivity.csv and t5_single_bank_runs.csv. Exit codes, as for the pipeline: 0 every rating green, 2 any amber, red
 or inconclusive overall (needs attention), 1 an error (for example no H.8 file yet).
 Confirmed breaks in the H.8 levels (config/validation.yaml) are left out of T1 and T4; the
 ratings before those exclusions are kept in results.json (`..._before_breaks`).
@@ -43,7 +44,7 @@ from riskplatform.logs import setup_logging
 from riskplatform.metrics.run import load_liquidity_regimes, read_validated
 from riskplatform.model_validation.backtest import GREEN, overall, run_off_rates, t1, t2
 from riskplatform.model_validation.h8 import H8DataError, load_h8
-from riskplatform.model_validation.sensitivity import latest_groups, t3, t4
+from riskplatform.model_validation.sensitivity import latest_groups, t3, t4, t5
 from riskplatform.quality.run import run_quality
 
 logger = logging.getLogger(__name__)
@@ -97,10 +98,9 @@ def run_validation(
     t2_result = t2((positions, fx), (stressed.positions, stressed.fx), stress_cfg, settings, rates)
 
     stress_rate = max(result["main"]["worst"] for result in t1_results.values())
-    t3_result = t3(
-        latest_groups(positions, fx, normal_cfg), regimes, stress_rate, limit,
-        vcfg.sensitivity.rate_grid,
-    )  # fmt: skip
+    groups = latest_groups(positions, fx, normal_cfg)
+    t3_result = t3(groups, regimes, stress_rate, limit, vcfg.sensitivity.rate_grid)
+    t5_table = t5(groups, regimes, vcfg.single_bank_runs.runs, limit)
     t4_result = t4(
         deposits, settings.h8_weeks, vcfg.sensitivity.benchmark_percentile,
         settings.confirmed_breaks,
@@ -123,6 +123,27 @@ def run_validation(
             "t2": t2_result,
             "t3": {**t3_result, "lowest_stressed_lcr": float(t3_table["stressed_lcr"].min())},
             "t4": {"percentile": vcfg.sensitivity.benchmark_percentile, "values": t4_result},
+            "t5": {
+                "source": vcfg.single_bank_runs.source,
+                "runs": [
+                    {
+                        "bank": run.bank,
+                        "period": run.period,
+                        "outflow": run.outflow,
+                        "at_least": run.at_least,
+                        "lowest_lcr": float(rows["lcr"].min()),
+                        "below_limit": int(rows["below_limit"].sum()),
+                        "below_minimum": int(rows["below_minimum"].sum()),
+                        "results": len(rows),
+                    }
+                    for run in vcfg.single_bank_runs.runs
+                    for rows in [
+                        t5_table[
+                            (t5_table["bank"] == run.bank) & (t5_table["period"] == run.period)
+                        ]
+                    ]
+                ],
+            },
             "ratings": {
                 **{f"t1_{name}": r["rating"] for name, r in t1_results.items()},
                 **{
@@ -135,6 +156,7 @@ def run_validation(
         },
         "t1_spells": pd.concat(spells, ignore_index=True),
         "t3_table": t3_table,
+        "t5_table": t5_table,
     }
 
 
@@ -144,6 +166,7 @@ def write_results(output: dict, out_dir: Path) -> None:
     (out_dir / "results.json").write_text(text, encoding="utf-8")
     output["t1_spells"].to_csv(out_dir / "t1_spells.csv", index=False, date_format="%Y-%m-%d")
     output["t3_table"].to_csv(out_dir / "t3_sensitivity.csv", index=False)
+    output["t5_table"].to_csv(out_dir / "t5_single_bank_runs.csv", index=False)
 
 
 def main(argv: list[str] | None = None) -> int:

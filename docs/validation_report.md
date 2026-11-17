@@ -118,7 +118,8 @@ next to the 5% and 10% assumptions.
 ## 5. Known limitations (stated before the results)
 
 1. **System totals, not one bank.** H.8 adds up deposits across many banks. A run at one bank
-   (Silicon Valley Bank lost about a quarter of its deposits in a single day) is largely offset
+   (Silicon Valley Bank lost over $40 billion of deposits in one day, 9 March 2023, according
+   to the Federal Reserve's review) is largely offset
    by deposits moving to other banks, so the system total hardly moves. A green T1 therefore
    means only that the rates are **not contradicted at system level**. It does not show that any
    one bank's deposits are safe. T2 and T3 exist because of this.
@@ -272,8 +273,9 @@ at most 1.6 points higher):
 | Group | 186.6% | 164.7% | 137.2% | 117.5% | 102.8% | 91.4% |
 
 **What T3 does not show (limitation 1).** The stress rate comes from system totals. A run on
-one bank can be far larger: Silicon Valley Bank lost about a quarter of its deposits in a single
-day. At a 25% run-off, BANK_EU and BANK_UK fall below the 100% minimum (93.7% and 97.1%, Basel)
+one bank can be far larger: in March 2023, Silicon Valley Bank, Signature Bank and First Republic
+each lost 20% or more of their deposits in a single day (section 6.8). At a 25% run-off,
+BANK_EU and BANK_UK fall below the 100% minimum (93.7% and 97.1%, Basel)
 and the group is at 102.8%. The bank withstands everything the system-wide data shows, but not
 a run of that kind.
 
@@ -299,7 +301,46 @@ this measure the rates are conservative for system-wide deposits.
 | T2 Detection check | GREEN (T1 conclusive) | GREEN |
 | T3 Sensitivity | GREEN | GREEN |
 | T4 Benchmark | report only (2.92% and 2.18%) | report only (2.92% and 2.41%) |
+| T5 Single-bank runs (section 6.8) | report only (added after the results) | not run |
 | **Overall** (worst of T1 and T3, as T2 is green) | **AMBER** | RED |
+
+### 6.8 T5 Single-bank runs (case study, report only)
+
+**Added on 2026-11-17, after the results above** (recommendation R2; section 9). Not part of the
+criteria fixed in section 4, so **it has no rating** and does not change the overall rating. It
+answers the question limitation 1 leaves open: what would runs like those of March 2023 do to
+this bank?
+
+**Source.** FDIC staff study, "Dissecting Depositor Flight: An Analysis of the Spring 2023 Bank
+Failures" (May 2026). It is built from the three banks' core deposit systems and gives the
+authors' views, not an official FDIC position. Every figure below is copied from it, with the
+sentence it comes from, in `config/validation.yaml` (`single_bank_runs`); a test checks each
+figure against its sentence. Caveats from the study: part of the SVB and Signature outflows
+happened after they failed, at the bridge banks, and First Republic's 7-17 March figure is net
+of $30 billion deposited by 11 large banks on 16 March (54% without it).
+
+Deposit outflow as a share of deposits on 6 March 2023, and this bank's LCR (latest validated
+day) if its retail deposits ran off at that rate (each category at least its rulebook rate, as in
+T3), across the 3 entities and the group under both rulebooks (8 results):
+
+| Bank | Period | Outflow | Lowest LCR | Below 110% | Below 100% |
+|---|---|---:|---:|---:|---:|
+| Silicon Valley Bank | one day (9 March) | at least 20% | 107.4% | 3 of 8 | 0 of 8 |
+| Silicon Valley Bank | 3 business days (9-14 March) | 50% | 57.2% | 8 of 8 | 8 of 8 |
+| Silicon Valley Bank | 7-17 March | 60% | 49.5% | 8 of 8 | 8 of 8 |
+| Signature Bank | 3 business days (10-14 March) | 50% | 57.2% | 8 of 8 | 8 of 8 |
+| Signature Bank | 7-17 March | 58% | 50.9% | 8 of 8 | 8 of 8 |
+| First Republic Bank | 3 business days (10-14 March) | 47% | 60.0% | 8 of 8 | 8 of 8 |
+| First Republic Bank | 7-17 March | 36% | 73.2% | 8 of 8 | 8 of 8 |
+
+**Finding.** Within days, each run was 4 to 12 times the LCR's 30-day stable rate (5%) and 2 to
+6 times its less-stable rate (10%). At the
+documented one-day loss (20% or more), three of the eight results fall below the 110% internal
+limit and none below 100%. At any of the documented multi-day runs (36% to 60%), every entity and
+the group, under both rulebooks, falls below the 100% minimum (lowest 49.5%). The
+5% and 10% rates are a regulatory floor calibrated to system-wide stress; they say nothing about a
+run concentrated on one bank with concentrated, largely uninsured deposits. The FDIC study finds
+that roughly two-thirds or more of each bank's top depositors ran.
 
 ## 7. Conclusion and recommendations
 
@@ -326,10 +367,11 @@ excluding one confirmed break in the data. It was RED before that exclusion (sec
 4. **Against a single-bank run they are not, and that is the bank's real exposure.** At the
    worst system-wide outflow (6.43%), every LCR stays at or above
    161.6% (T3). But the LCR falls to the 110% internal limit at a
-   19.2-29.4% run-off, and to the 100% minimum at 22.5-33.6%, depending on the entity. Silicon
-   Valley Bank lost about a quarter of its deposits in one day: a run of that size would take
-   BANK_EU and BANK_UK below the minimum (section 6.5). The system data cannot show this risk
-   (limitation 1).
+   19.2-29.4% run-off, and to the 100% minimum at 22.5-33.6%, depending on the entity. The
+   documented runs of March 2023 were far larger: each failed bank lost 20% or more of its
+   deposits in one day and 36% to 60% within days. Any of those multi-day runs would take every
+   entity and the group below the 100% minimum (T5, section 6.8, lowest 49.5%). The
+   system data cannot show this risk (limitation 1).
 
 **In short:** the 5% and 10% rates are not contradicted by 54 years of US system-wide deposit
 data, and the bank's LCR has ample room for the worst system-wide outflow. The evidence says
@@ -340,7 +382,7 @@ nothing reassuring about a run on one bank. That is where the recommendations fo
 | # | Recommendation | Why | Priority |
 |---|---|---|---|
 | R1 | **Resolve the 1985 data point.** *Done 2026-11-17:* confirmed as a break from the Fed's own data and the April 1985 H.8 release; excluded under limitation 7 and re-rated (sections 6.2 and 9). | The overall RED rested on it. | Done |
-| R2 | **Add a single-bank view.** Obtain bank-level deposit data for banks that failed or nearly failed (for example quarterly regulatory filings around March 2023), and run T1 and T3 on them. | System totals hide single-bank runs (limitation 1), and T3 shows the bank cannot withstand one of SVB's size. | High |
+| R2 | **Add a single-bank view.** *Case study done 2026-11-17 (T5, section 6.8: the documented March 2023 runs).* Still to do: the distribution of quarterly deposit changes across all FDIC-insured banks, with mergers filtered out. | System totals hide single-bank runs (limitation 1); T5 shows such runs would breach the minimum. | High (half done) |
 | R3 | *Done 2026-11-17 (`config/early_warning.yaml`, threshold 20%, docs/reporting.md section 7):* **Set a reverse stress trigger.** Report the break-even run-off rates (19-34%) monthly beside the LCR. Treat a fall in the lowest break-even below a set level (judgement, e.g. 20%) as an early warning for the contingency funding plan. | It turns T3 into ongoing monitoring of how close the bank is to its limits. | Medium |
 | R4 | *Done 2026-11-17 (threshold 3%):* **Use the T4 percentile as an early-warning indicator.** Flag any 4-week retail outflow above about 3% (the system 99th percentile) at an entity. | It is rarer than 1 in 100 for the system, and far below the regulatory rates. | Medium |
 | R5 | **Measure outflows from a robust base in a future version.** For example, use the average of the previous 4 weeks instead of a single week, or report window starts at year- and quarter-ends separately. Do not change this validation's criteria after the fact; apply it at the next validation. | The amber is calendar spikes unwinding (section 6.2); the current measure overstates outflows that start on a spike. | Low |
@@ -428,6 +470,14 @@ After results were seen (2026-11-17), both recorded here with their reasons:
    either way, and at 10.69% the floor did not apply.
 
 Neither change touches a threshold in section 4.
+
+3. **T5 added** (2026-11-17, after the results; recommendation R2): the LCR under documented
+   single-bank runs (section 6.8). Report only, with no rating, so the overall rating is
+   unchanged. The figures come from an FDIC staff study, each with its quoted sentence.
+4. **Factual correction in limitation 1** (section 5): "lost about a quarter of its deposits in
+   a single day" became the Federal Reserve's own figure, "over $40 billion ... on March 9" (its
+   review of 28 April 2023). The quarter was an approximation not found in either source. The
+   limitation's meaning is unchanged.
 
 Before any result (step 9.2, 2026-11-17, while checking the data source):
 - Section 3: the FRED series IDs, units and start date, as checked on FRED.

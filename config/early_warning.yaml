@@ -21,6 +21,7 @@ break_even_run_off:
   # the entity's LCR would fall to the internal LCR limit (config/limits.yaml), per rulebook.
   threshold: 0.20  # alert below 20%
   why: >-
-    Judgement, below the roughly one quarter of its deposits that Silicon Valley Bank lost in one
-    day (March 2023). A lower break-even means a smaller run would take the LCR to its limit
-    (validation test T3: 19.2% to 29.4% across the entities on 2026-10-23).
+    Judgement, equal to the one-day net deposit outflow ("20 percent or more") that each of Silicon
+    Valley Bank, Signature Bank and First Republic suffered in March 2023 (FDIC staff study, May
+    2026; validation test T5). Below it, a single day like theirs would take the LCR to its limit.
+    Test T3 found 19.2% to 29.4% across the entities on 2026-10-23.

@@ -72,8 +72,8 @@ Federal Reserve H.8 deposit data and a planted deposit run. The pass/fail criter
 before any result. The overall rating is **AMBER**: calendar spikes in the all-bank series (a
 first RED was traced to a confirmed 1985 break in the Fed's data, and re-rated openly). In
 2008, 2020 and 2023, system-wide deposits fell by at most 3.9% in 4 weeks, well within the
-rates. But a run the size of Silicon Valley Bank's would take two entities below the LCR
-minimum. Details and
+rates. But the documented single-bank runs of March 2023 (36% to 60% of deposits within days,
+per an FDIC study of the banks' own data) would take every entity below the LCR minimum. Details and
 recommendations: [validation report](docs/validation_report.md).
 
 [Daily report, page 1](docs/images/daily_report_page1.png)

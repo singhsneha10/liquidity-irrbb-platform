@@ -135,3 +135,33 @@ def t4(
         outflow = without_breaks(forward_outflow(levels, weeks), weeks, list(breaks), name)
         result[name] = float(outflow.dropna().quantile(percentile))
     return result
+
+
+def t5(
+    groups: list[tuple[dict, pd.DataFrame]],
+    regimes: dict[str, LiquidityRules],
+    runs: list,
+    limit: float,
+) -> pd.DataFrame:
+    """T5 (case study, report only): every entity's and the group's LCR, under each rulebook, if
+    retail deposits ran off at the rate of each documented single-bank run (config/validation.yaml
+    single_bank_runs; each category at least its rulebook rate, as in T3)."""
+    rows = []
+    for run in runs:
+        for key, group in groups:
+            for name, rules in regimes.items():
+                ratio = lcr_at(group, rules, run.outflow)
+                rows.append(
+                    {
+                        "bank": run.bank,
+                        "period": run.period,
+                        "outflow": run.outflow,
+                        "at_least": run.at_least,
+                        "regime": name,
+                        "who": _who(key),
+                        "lcr": ratio,
+                        "below_limit": ratio < limit,
+                        "below_minimum": ratio < rules.lcr.minimum.value,
+                    }
+                )
+    return pd.DataFrame(rows)

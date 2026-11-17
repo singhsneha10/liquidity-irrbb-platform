@@ -133,3 +133,31 @@ def test_t4_leaves_out_windows_spanning_a_confirmed_break():
     gap = SeriesBreak(series="s", last_before="2023-01-11", first_after="2023-01-18", evidence="t")
     assert t4(deposits, weeks=1, percentile=1.0)["s"] == pytest.approx(0.5)
     assert t4(deposits, weeks=1, percentile=1.0, breaks=[gap])["s"] == 0.0
+
+
+def test_t5_measures_every_entity_under_every_documented_run(bank):
+    from riskplatform.config import load_validation_config
+    from riskplatform.model_validation.sensitivity import t5
+
+    cfg, positions, fx, regimes = bank
+    runs = load_validation_config(CONFIG / "validation.yaml").single_bank_runs.runs
+    groups = latest_groups(positions, fx, cfg)
+    table = t5(groups, regimes, runs, 1.10)
+    assert len(table) == len(runs) * len(groups) * len(regimes)
+    for run in runs[:2]:
+        rows = table[(table["bank"] == run.bank) & (table["period"] == run.period)]
+        for (key, group), name in [(g, r) for g in groups for r in regimes]:
+            row = rows[(rows["who"] == (key["entity"] or "GROUP")) & (rows["regime"] == name)]
+            assert row["lcr"].iloc[0] == pytest.approx(lcr_at(group, regimes[name], run.outflow))
+    assert (table["below_limit"] == (table["lcr"] < 1.10)).all()
+    assert (table["below_minimum"] == (table["lcr"] < 1.0)).all()
+
+
+def test_every_documented_run_is_its_quoted_figure():
+    """Each outflow in config must be the number in the sentence it is copied from."""
+    from riskplatform.config import load_validation_config
+
+    runs = load_validation_config(CONFIG / "validation.yaml").single_bank_runs.runs
+    for run in runs:
+        assert f"{round(run.outflow * 100)} percent" in run.quote, (run.bank, run.period)
+        assert run.at_least == ("or more" in run.quote and "one day" in run.period)

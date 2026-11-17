@@ -860,12 +860,31 @@ class SensitivitySettings(_Strict):
         return self
 
 
+class DocumentedRun(_Strict):
+    """One documented single-bank deposit run, with the sentence it is copied from."""
+
+    bank: str = Field(min_length=1)
+    period: str = Field(min_length=1)
+    outflow: float = Field(gt=0, lt=1)  # share of the deposits before the run
+    at_least: bool  # True: the source gives a lower bound ("20 percent or more")
+    quote: str = Field(min_length=1)
+
+
+class SingleBankRuns(_Strict):
+    """Test T5: documented single-bank runs (case study, report only)."""
+
+    source: str = Field(min_length=1)
+    caveat: str = Field(min_length=1)
+    runs: list[DocumentedRun] = Field(min_length=1)
+
+
 class ValidationConfig(_Strict):
     """Model validation settings (config/validation.yaml); criteria: docs/validation_report.md."""
 
     h8: H8Source
     backtest: BacktestSettings
     sensitivity: SensitivitySettings
+    single_bank_runs: SingleBankRuns
 
 
 def load_validation_config(path: str | Path) -> ValidationConfig:

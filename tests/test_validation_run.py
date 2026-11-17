@@ -128,7 +128,8 @@ def test_the_command_writes_every_result_and_exits_2_unless_green(full_run, tmp_
     assert validate.main(["--out", str(tmp_path)]) == 2  # overall amber: needs attention
     out_dir = Path(capsys.readouterr().out.strip())
     assert {p.name for p in out_dir.iterdir()} == {"results.json", "t1_spells.csv",
-                                                  "t3_sensitivity.csv"}  # fmt: skip
+                                                  "t3_sensitivity.csv",
+                                                  "t5_single_bank_runs.csv"}  # fmt: skip
     saved = json.loads((out_dir / "results.json").read_text(encoding="utf-8"))
     assert saved["ratings"]["overall"] == "amber"
     assert saved["h8"]["sha256"] == json.loads(
@@ -144,3 +145,22 @@ def test_without_the_h8_file_the_command_exits_1(tmp_path, caplog):
     assert validate.main(["--config", str(config), "--out", str(tmp_path / "out")]) == 1
     assert "fetch it first" in caplog.text
     assert not (tmp_path / "out").exists()
+
+
+def test_report_t5_table_equals_the_code(banks):
+    """Section 6.8: every row, computed from the validated bank and the documented runs."""
+    from riskplatform.model_validation.sensitivity import t5
+
+    normal_cfg, _, (positions, fx), _, _ = banks
+    limit = load_limits_config(CONFIG / "limits.yaml").limits["lcr"].value
+    runs = VCFG.single_bank_runs.runs
+    table = t5(latest_groups(positions, fx, normal_cfg), load_liquidity_regimes(
+        CONFIG / "liquidity"), runs, limit)  # fmt: skip
+    for run in runs:
+        rows = table[(table["bank"] == run.bank) & (table["period"] == run.period)]
+        size = ("at least " if run.at_least else "") + _pct(run.outflow, 0)
+        _in_report(
+            f"| {run.bank} | {run.period} | {size} | {_pct(rows['lcr'].min(), 1)} | "
+            f"{int(rows['below_limit'].sum())} of {len(rows)} | "
+            f"{int(rows['below_minimum'].sum())} of {len(rows)} |"
+        )

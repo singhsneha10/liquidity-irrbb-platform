@@ -251,7 +251,7 @@ data: hand-worked examples written before the code, and proofs against published
     27 Mar - 3 Apr 1985 that looks like a panel reclassification but the Fed notes cannot
     confirm, so it counts; without it 4.98%; since Oct 1989 3.87%); T2 GREEN (planted 9.39%,
     found 9.30%); T3 GREEN (lowest stressed LCR 146.0%; break-even 19.2-29.4% at 110%,
-    22.5-33.6% at 100%; an SVB-size 25% run takes BANK_EU and BANK_UK below 100%); T4 2.92% and
+    22.5-33.6% at 100%; a 25% run takes BANK_EU and BANK_UK below 100%); T4 2.92% and
     2.41%. **Overall RED.** Recommendations R1-R7 in the report (resolve 1985 first).
   - **Re-rated 2026-11-17 (R1, after the results; author's decision, logged in the report's
     section 9):** the 1985 fall is a confirmed break: FRED's large-bank deposits
@@ -274,13 +274,26 @@ data: hand-worked examples written before the code, and proofs against published
 - **Early-warning indicators (R3/R4, 2026-11-17; `riskplatform/early_warning.py`,
   `config/early_warning.yaml`):** retail outflow over 20 business days (fixed FX, alert above
   3%, about the T4 99th percentile) and break-even run-off to the 110% LCR limit (alert below
-  20%, under SVB's ~25% one-day loss), per entity and group (break-even per rulebook too). They
+  20%, the one-day loss of each 2023 failed bank), per entity and group (and per rulebook). They
   reuse the backtest's outflow measure and T3's `break_even`. Pipeline stage `early_warning`
   after `changes` (findings if any alert), S3, query view `early_warning`, Dagster asset
   `early_warning_indicators` (WARN check), and shown in the email (an indicator alone now
   sends it; subject adds ", K early warnings"), dashboard Limits tab, PDF section and
   `early_warning.csv`. Today: break-even alerts for BANK_EU (19.18% / 19.45%) and BANK_UK
   Basel (19.99%); retail outflow quiet, and alerts at BANK_UK on the planted run (tested).
+
+- **T5 single-bank runs (R2 case study, 2026-11-17; report only, no rating, added after the
+  results and logged in the report's section 9):** documented March 2023 runs from the FDIC
+  staff study "Dissecting Depositor Flight" (May 2026, banks' core systems): each of SVB,
+  Signature, First Republic lost 20%+ in one day; 47-50% in 3 business days; 36-60% over 7-17
+  March. In `config/validation.yaml` (`single_bank_runs`) with each quoted sentence (a test
+  checks figure vs quote). T5 reruns the LCR at each rate (`sensitivity.t5`): at 20%, 3 of 8
+  results below 110%, none below 100%; at 36%+, every entity and the group below 100% (lowest
+  49.5%). Also checked: the Fed's SVB review says "over $40 billion" on 9 March; the earlier
+  "about a quarter in one day" claim was replaced everywhere by the sourced figures. The
+  early-warning 20% break-even threshold now rests on the 20% one-day figure. FDIC API checked
+  (quarterly Call Reports): SVB 24735, Signature 57053, First Republic 59017; SVB has no
+  2023 Q1 report, First Republic fell 40.8% in 2023 Q1.
 
 ## Status
 | Phase | Status |
@@ -410,8 +423,9 @@ error to Claude); run Terraform from the work PC.
 ## Next steps
 1. **Phase 9 follow-ups** (from `docs/validation_report.md`, section 7.2), most important first:
    R1 DONE 2026-11-17 (1985 break confirmed and excluded; overall AMBER). R3/R4 DONE
-   2026-11-17 (early-warning indicators). R2 add bank-level deposit data (single-bank runs):
-   needs a data-source decision with the author.
+   2026-11-17 (early-warning indicators). R2 case study DONE 2026-11-17 (T5, below); R2 part 2
+   NEXT: distribution of quarterly deposit changes across all FDIC-insured banks (FDIC API,
+   free, no key; filter mergers with FDIC structure data). Author chose "both, case study first".
    R3/R4 turn the break-even rates and the ~3% T4 percentile into early-warning indicators.
    Ask the author before starting any of them.
 2. Phase 7 leftovers, **personal PC only**: back up the Terraform state; turn the schedule on when

@@ -60,3 +60,31 @@ sensitivity:
   rate_grid: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
   # T4: percentile of all 4-week H.8 outflows (rises count as 0), report only.
   benchmark_percentile: 0.99
+
+# T5 (case study, report only; added after the main results, see the report's section 9):
+# documented single-bank deposit runs of March 2023. Every figure is copied from the source
+# named, with the sentence it comes from, checked on 2026-11-17. "outflow" is the share of the
+# bank's deposits on 6 March 2023 (SVB: domestic deposits) that left over the period.
+single_bank_runs:
+  source: >-
+    FDIC staff study "Dissecting Depositor Flight: An Analysis of the Spring 2023 Bank Failures"
+    (May 2026; the authors' views, not an official FDIC position), built from the three banks'
+    core deposit systems: https://www.fdic.gov/center-financial-research/staff-studies-may-2026.pdf
+  caveat: >-
+    Part of the SVB and Signature outflows happened after they failed, at the bridge banks; First
+    Republic's 7-17 March figure is net of $30 billion deposited by 11 large banks on 16 March.
+  runs:
+    - {bank: "Silicon Valley Bank", period: "one day (9 March)", outflow: 0.20, at_least: true,
+       quote: "each bank had one day in which net deposit outflows reached 20 percent or more of its March 6 deposits"}
+    - {bank: "Silicon Valley Bank", period: "3 business days (9-14 March)", outflow: 0.50, at_least: false,
+       quote: "Between March 9 and March 14, SVB lost 50 percent of its March 6 domestic deposits."}
+    - {bank: "Silicon Valley Bank", period: "7-17 March", outflow: 0.60, at_least: false,
+       quote: "SVB and SBNY lost more than half of their March 6 domestic deposits (60 percent at SVB and 58 percent at SBNY)"}
+    - {bank: "Signature Bank", period: "3 business days (10-14 March)", outflow: 0.50, at_least: false,
+       quote: "between March 10 and March 14, SBNY lost 50 percent of its March 6 deposits and FRB lost 47 percent"}
+    - {bank: "Signature Bank", period: "7-17 March", outflow: 0.58, at_least: false,
+       quote: "SVB and SBNY lost more than half of their March 6 domestic deposits (60 percent at SVB and 58 percent at SBNY)"}
+    - {bank: "First Republic Bank", period: "3 business days (10-14 March)", outflow: 0.47, at_least: false,
+       quote: "between March 10 and March 14, SBNY lost 50 percent of its March 6 deposits and FRB lost 47 percent"}
+    - {bank: "First Republic Bank", period: "7-17 March", outflow: 0.36, at_least: false,
+       quote: "FRB lost 36 percent of its March 6 deposits (or 54 percent if excluding the $30 billion deposited by a consortium of 11 large banks on March 16)"}

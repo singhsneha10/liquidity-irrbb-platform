@@ -186,7 +186,7 @@ judgement, like the limits.
 | Indicator | Measures (latest day; every entity and the group) | Alert when | Why that level |
 |---|---|---|---|
 | Retail outflow | Fall in stable and in less-stable retail deposits over the last 20 business days (about 4 weeks), all currencies at the first day's FX rates | above 3% | About the 99th percentile of 4-week US system-wide outflows since 1973 (2.92%, validation T4); far below the LCR's 5% and 10% |
-| Break-even run-off | The single retail run-off rate (each category at least its rulebook rate) at which the LCR would fall to the 110% internal limit, per rulebook | below 20% | Below the roughly one quarter of its deposits that Silicon Valley Bank lost in one day (March 2023) |
+| Break-even run-off | The single retail run-off rate (each category at least its rulebook rate) at which the LCR would fall to the 110% internal limit, per rulebook | below 20% | The one-day net outflow (20% or more) that each of Silicon Valley Bank, Signature and First Republic suffered in March 2023 (FDIC staff study, May 2026; validation T5) |
 
 - **Reuse:** both use code that the validation already tested. The outflow measure is the
   backtest's; the break-even search is T3's. Nothing new is calculated.
