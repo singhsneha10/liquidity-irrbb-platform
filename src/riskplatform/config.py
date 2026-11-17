@@ -117,6 +117,37 @@ class FxConfig(_Strict):
         return self
 
 
+class StressEpisode(_Strict):
+    """A planted deposit run (model validation test instrument, not an estimate of a real run).
+
+    From `start` (a business day), each named liability category of `entity`, in `currencies` (all
+    if not given), loses the given share of its balance over `business_days` business days, the
+    same fraction each day; what left does not come back. The withdrawals are paid out of the
+    same entity's and currency's assets in `paid_from` order (e.g. central bank reserves, then
+    government bonds), each drawn down to `keep_at_least` of its normal balance at most; an
+    episode larger than that is refused. No random numbers are drawn, so every day before
+    `start`, and every run without an episode, is identical to the normal bank.
+    """
+
+    entity: str
+    currencies: list[str] | None = None  # None: every currency of the entity
+    start: date
+    business_days: int = Field(gt=0)
+    outflows: dict[str, float] = Field(min_length=1)  # category -> share leaving over the episode
+    paid_from: list[str] = Field(min_length=1)  # asset categories, used in this order
+    keep_at_least: float = Field(gt=0, lt=1)  # a paying asset keeps this share (balances stay > 0)
+    why: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "StressEpisode":
+        if self.start.weekday() >= 5:
+            raise ValueError(f"stress start {self.start} is not a business day (Monday-Friday)")
+        for category, share in self.outflows.items():
+            if not 0 < share < 1:
+                raise ValueError(f"stress outflow for {category} must be between 0 and 1: {share}")
+        return self
+
+
 class GeneratorConfig(_Strict):
     seed: int
     start_date: date
@@ -135,6 +166,7 @@ class GeneratorConfig(_Strict):
     rate_bounds: RateBounds  # data contract: every rate in positions and curves lies within
     rates: RatesConfig
     fx: FxConfig
+    stress: StressEpisode | None = None  # off by default (config/generator_stress.yaml sets one)
 
     @property
     def entity_names(self) -> list[str]:
@@ -182,7 +214,30 @@ class GeneratorConfig(_Strict):
                 f"fx.start_to_reporting must give exactly {sorted(others)}, "
                 f"got {sorted(self.fx.start_to_reporting)}"
             )
+        if self.stress is not None:
+            self._check_stress(self.stress)
         return self
+
+    def _check_stress(self, stress: StressEpisode) -> None:
+        if stress.entity not in self.entity_names:
+            raise ValueError(f"stress entity {stress.entity} is not in {self.entity_names}")
+        for category in stress.outflows:
+            side = self.side_by_category.get(category)
+            if side != "liability":
+                raise ValueError(
+                    f"stress category {category} must be a liability category, got side {side}"
+                )
+        for category in stress.paid_from:
+            side = self.side_by_category.get(category)
+            if side != "asset":
+                raise ValueError(
+                    f"stress paid_from {category} must be an asset category, got side {side}"
+                )
+        unknown = set(stress.currencies or []) - set(self.currencies)
+        if unknown:
+            raise ValueError(f"stress currencies {sorted(unknown)} are not in {self.currencies}")
+        if stress.start < self.start_date:
+            raise ValueError(f"stress start {stress.start} is before start_date {self.start_date}")
 
     def through(self, as_of: date) -> "GeneratorConfig":
         """The same bank, generated up to as_of: n_days becomes the number of business days
@@ -721,3 +776,165 @@ class ReportingConfig(_Strict):
 def load_reporting_config(path: str | Path) -> ReportingConfig:
     """Read a YAML file and return a validated ReportingConfig."""
     return ReportingConfig.model_validate(_read_yaml(path))
+
+
+class H8Source(_Strict):
+    """Federal Reserve H.8 deposit series on FRED (config/validation.yaml, h8)."""
+
+    url: str  # template with a {series} placeholder
+    series: dict[str, str] = Field(min_length=1)  # name in the results -> FRED series ID
+    output_file: Path
+    provenance_file: Path
+    user_agent: str = Field(min_length=1)
+    timeout_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "H8Source":
+        if "{series}" not in self.url:
+            raise ValueError(f"url must contain {{series}}: {self.url}")
+        if len(set(self.series.values())) != len(self.series):
+            raise ValueError(f"each name needs its own FRED series ID: {self.series}")
+        return self
+
+
+class Episode(_Strict):
+    name: str = Field(min_length=1)
+    start: date
+    end: date
+
+    @model_validator(mode="after")
+    def _check(self) -> "Episode":
+        if self.end < self.start:
+            raise ValueError(f"episode {self.name}: end {self.end} is before start {self.start}")
+        return self
+
+
+class SeriesBreak(_Strict):
+    """A confirmed break in a series' levels: windows spanning last_before -> first_after are not
+    outflows (docs/validation_report.md, limitation 7)."""
+
+    series: str = Field(min_length=1)
+    last_before: date
+    first_after: date
+    evidence: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "SeriesBreak":
+        if self.first_after <= self.last_before:
+            raise ValueError(f"break in {self.series}: first_after must be after last_before")
+        return self
+
+
+class BacktestSettings(_Strict):
+    """Run-off backtest settings (tests T1 and T2 of docs/validation_report.md)."""
+
+    h8_weeks: int = Field(gt=0)
+    h8_conservative_weeks: int = Field(gt=0)
+    synthetic_days: int = Field(gt=0)
+    synthetic_conservative_days: int = Field(gt=0)
+    detection_tolerance: float = Field(gt=0, lt=1)
+    normal_config: Path
+    stress_config: Path
+    episodes: list[Episode]
+    confirmed_breaks: list[SeriesBreak] = []
+
+    @model_validator(mode="after")
+    def _check(self) -> "BacktestSettings":
+        if self.h8_conservative_weeks <= self.h8_weeks:
+            raise ValueError("h8_conservative_weeks must be longer than h8_weeks")
+        if self.synthetic_conservative_days <= self.synthetic_days:
+            raise ValueError("synthetic_conservative_days must be longer than synthetic_days")
+        return self
+
+
+class SensitivitySettings(_Strict):
+    """LCR sensitivity to the retail run-off rates (T3) and the benchmark percentile (T4)."""
+
+    rate_grid: list[float] = Field(min_length=1)
+    benchmark_percentile: float = Field(gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "SensitivitySettings":
+        if any(not 0 <= rate <= 1 for rate in self.rate_grid):
+            raise ValueError(f"rate_grid values must be between 0 and 1: {self.rate_grid}")
+        return self
+
+
+class DocumentedRun(_Strict):
+    """One documented single-bank deposit run, with the sentence it is copied from."""
+
+    bank: str = Field(min_length=1)
+    period: str = Field(min_length=1)
+    outflow: float = Field(gt=0, lt=1)  # share of the deposits before the run
+    at_least: bool  # True: the source gives a lower bound ("20 percent or more")
+    quote: str = Field(min_length=1)
+
+
+class SingleBankRuns(_Strict):
+    """Test T5: documented single-bank runs (case study, report only)."""
+
+    source: str = Field(min_length=1)
+    caveat: str = Field(min_length=1)
+    runs: list[DocumentedRun] = Field(min_length=1)
+
+
+class FdicSource(_Strict):
+    """FDIC BankFind API: quarterly deposits and structure events (test T6)."""
+
+    api_url: str = Field(min_length=1)
+    first_quarter: date
+    events_from: date
+    page_limit: int = Field(gt=0)
+    deposits_file: Path
+    events_file: Path
+    provenance_file: Path
+    user_agent: str = Field(min_length=1)
+    timeout_seconds: float = Field(gt=0)
+    deposit_moving_codes: dict[int, str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "FdicSource":
+        if (self.first_quarter.month, self.first_quarter.day) not in {(3, 31), (6, 30), (9, 30),
+                                                                       (12, 31)}:  # fmt: skip
+            raise ValueError(f"first_quarter {self.first_quarter} is not a quarter end")
+        if self.events_from >= self.first_quarter:
+            raise ValueError("events_from must be before first_quarter")
+        return self
+
+
+class ValidationConfig(_Strict):
+    """Model validation settings (config/validation.yaml); criteria: docs/validation_report.md."""
+
+    h8: H8Source
+    backtest: BacktestSettings
+    sensitivity: SensitivitySettings
+    single_bank_runs: SingleBankRuns
+    fdic: FdicSource
+
+
+def load_validation_config(path: str | Path) -> ValidationConfig:
+    """Read a YAML file and return a validated ValidationConfig."""
+    return ValidationConfig.model_validate(_read_yaml(path))
+
+
+class RetailOutflowIndicator(_Strict):
+    business_days: int = Field(gt=0)
+    threshold: float = Field(gt=0, lt=1)  # alert above
+    why: str = Field(min_length=1)
+
+
+class BreakEvenIndicator(_Strict):
+    threshold: float = Field(gt=0, le=1)  # alert below
+    why: str = Field(min_length=1)
+
+
+class EarlyWarningConfig(_Strict):
+    """Early-warning indicators (config/early_warning.yaml); the bank's judgement."""
+
+    retail_outflow: RetailOutflowIndicator
+    break_even_run_off: BreakEvenIndicator
+
+
+def load_early_warning_config(path: str | Path) -> EarlyWarningConfig:
+    """Read a YAML file and return a validated EarlyWarningConfig."""
+    return EarlyWarningConfig.model_validate(_read_yaml(path))

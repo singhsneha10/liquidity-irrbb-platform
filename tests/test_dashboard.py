@@ -180,3 +180,15 @@ def test_the_command_starts_streamlit_on_the_app(monkeypatch):
     launcher.main()
     assert seen["argv"] == ["streamlit", "run", str(APP.resolve()), "--server.port", "8502"]
     assert json.dumps(seen)  # plain strings only
+
+
+def test_early_warning_view_is_the_runs_indicators(board):
+    rows = pd.read_parquet(board.results_dir / "early_warning" / board.run_id /
+                           "early_warning.parquet")  # fmt: skip
+    for regime in ("basel", "pra"):
+        shown = data.early_warning(board.con, regime)
+        expected = rows[rows["regime"].isna() | (rows["regime"] == regime)]
+        assert len(shown) == len(expected)
+        if (expected["status"] == "alert").any():
+            assert shown["status"].iloc[0] == "alert"  # alerts listed first
+    assert len(data.early_warning_alerts(board.con)) == int((rows["status"] == "alert").sum())

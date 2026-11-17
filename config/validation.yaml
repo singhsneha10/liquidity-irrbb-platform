@@ -1,0 +1,131 @@
+# Model validation (Phase 9), validated by riskplatform.config.ValidationConfig.
+# What is validated and the pass / fail criteria: docs/validation_report.md (fixed before results).
+
+# Real deposit data: Federal Reserve H.8 "Assets and Liabilities of Commercial Banks in the
+# United States", weekly (ending Wednesday), billions of US dollars, NOT seasonally adjusted.
+# IDs checked on FRED on 2026-11-17. Fetch with:  python -m riskplatform.model_validation.h8
+# FRED marks the data as copyrighted: the saved file stays in data/ (ignored by Git).
+h8:
+  url: "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+  series:  # name used in the results -> FRED series ID
+    all_commercial_banks: DPSACBW027NBOG
+    small_banks: DPSSCBW027NBOG  # small domestically chartered: all but the largest 25 banks
+  output_file: data/external/h8_deposits.parquet
+  provenance_file: data/external/h8_deposits_provenance.json
+  user_agent: riskplatform-validation/0.1
+  timeout_seconds: 300
+
+# Backtest of the retail run-off rates (tests T1 and T2). The rates themselves are read from
+# config/liquidity/ (basel.yaml and pra.yaml must agree), never typed again here.
+backtest:
+  # H.8 is weekly: 30 days is measured as 4 weeks (28 days), and 5 weeks (35 days) as the
+  # conservative check (docs/validation_report.md, section 2). Ratings use the 4-week figures.
+  h8_weeks: 4
+  h8_conservative_weeks: 5
+  # The synthetic bank is daily (business days): 20 business days = 28 calendar days, and 25 as
+  # the conservative check, matching the H.8 horizons.
+  synthetic_days: 20
+  synthetic_conservative_days: 25
+  # T2: the measured planted run must lie within this distance of the planted size.
+  detection_tolerance: 0.01
+  normal_config: config/generator.yaml
+  stress_config: config/generator_stress.yaml
+  # Named stress episodes: outflows whose 4-week window STARTS in these dates.
+  episodes:
+    - {name: "2008 Lehman Brothers", start: 2008-09-01, end: 2008-12-31}
+    - {name: "2020 COVID-19", start: 2020-03-01, end: 2020-05-31}
+    - {name: "2023 Silicon Valley Bank", start: 2023-03-01, end: 2023-05-31}
+  # Confirmed breaks in the H.8 levels (docs/validation_report.md, limitation 7): every window
+  # spanning the step from `last_before` to `first_after` is left out of T1 and T4, because the
+  # change in level there is not a withdrawal. The results keep the rating without exclusions.
+  # Added AFTER the results were seen (logged in the report, section 9), on documentary evidence.
+  confirmed_breaks:
+    - series: small_banks
+      last_before: 1985-03-27
+      first_after: 1985-04-03
+      evidence: >-
+        FRED's large-bank deposit series (DPSLCBW027NBOG) and small-bank total assets
+        (TLASCBW027NBOG) begin on 1985-04-03: the large/small split of today's series starts that
+        week. The H.8 release of 5 April 1985 (FRASER) split domestic banks by total assets under
+        and over $1.4bn (as of 31 Dec 1982), with 902.7bn of deposits under $1.4bn on 6 March 1985,
+        against 316.4bn in FRED's small-bank series that day: the earlier small-bank levels are a
+        later reconstruction on another basis. In the week of the step, small banks -$30.1bn,
+        other banks +$69.5bn, all banks +$39.5bn.
+
+# Sensitivity (T3) and benchmark (T4). T3's stress rate is the worst T1 outflow (computed, not
+# set here); the internal limit (110%) and the minimum (100%) come from config/limits.yaml and
+# config/liquidity/.
+sensitivity:
+  # Run-off rates (applied to both retail categories) for the LCR table in the report.
+  rate_grid: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+  # T4: percentile of all 4-week H.8 outflows (rises count as 0), report only.
+  benchmark_percentile: 0.99
+
+# T5 (case study, report only; added after the main results, see the report's section 9):
+# documented single-bank deposit runs of March 2023. Every figure is copied from the source
+# named, with the sentence it comes from, checked on 2026-11-17. "outflow" is the share of the
+# bank's deposits on 6 March 2023 (SVB: domestic deposits) that left over the period.
+single_bank_runs:
+  source: >-
+    FDIC staff study "Dissecting Depositor Flight: An Analysis of the Spring 2023 Bank Failures"
+    (May 2026; the authors' views, not an official FDIC position), built from the three banks'
+    core deposit systems: https://www.fdic.gov/center-financial-research/staff-studies-may-2026.pdf
+  caveat: >-
+    Part of the SVB and Signature outflows happened after they failed, at the bridge banks; First
+    Republic's 7-17 March figure is net of $30 billion deposited by 11 large banks on 16 March.
+  runs:
+    - {bank: "Silicon Valley Bank", period: "one day (9 March)", outflow: 0.20, at_least: true,
+       quote: "each bank had one day in which net deposit outflows reached 20 percent or more of its March 6 deposits"}
+    - {bank: "Silicon Valley Bank", period: "3 business days (9-14 March)", outflow: 0.50, at_least: false,
+       quote: "Between March 9 and March 14, SVB lost 50 percent of its March 6 domestic deposits."}
+    - {bank: "Silicon Valley Bank", period: "7-17 March", outflow: 0.60, at_least: false,
+       quote: "SVB and SBNY lost more than half of their March 6 domestic deposits (60 percent at SVB and 58 percent at SBNY)"}
+    - {bank: "Signature Bank", period: "3 business days (10-14 March)", outflow: 0.50, at_least: false,
+       quote: "between March 10 and March 14, SBNY lost 50 percent of its March 6 deposits and FRB lost 47 percent"}
+    - {bank: "Signature Bank", period: "7-17 March", outflow: 0.58, at_least: false,
+       quote: "SVB and SBNY lost more than half of their March 6 domestic deposits (60 percent at SVB and 58 percent at SBNY)"}
+    - {bank: "First Republic Bank", period: "3 business days (10-14 March)", outflow: 0.47, at_least: false,
+       quote: "between March 10 and March 14, SBNY lost 50 percent of its March 6 deposits and FRB lost 47 percent"}
+    - {bank: "First Republic Bank", period: "7-17 March", outflow: 0.36, at_least: false,
+       quote: "FRB lost 36 percent of its March 6 deposits (or 54 percent if excluding the $30 billion deposited by a consortium of 11 large banks on March 16)"}
+
+# T6 (report only; plan fixed in the report's section 6.9 before this data was downloaded):
+# quarterly deposits of every FDIC-insured institution, and the structure events that move
+# deposits without depositors withdrawing them. Fetch with:
+#   python -m riskplatform.model_validation.fdic      (needs the internet once; several minutes)
+# FDIC BankFind API, free, no key. Saved under data/ (not committed).
+fdic:
+  api_url: "https://api.fdic.gov/banks"
+  first_quarter: 2001-03-31
+  events_from: 2000-10-01     # from the start of the quarter before the first quarter
+  page_limit: 10000           # the API's maximum rows per request; larger chunks are split
+  deposits_file: data/external/fdic_deposits.parquet
+  events_file: data/external/fdic_structure_events.parquet
+  provenance_file: data/external/fdic_provenance.json
+  user_agent: riskplatform-validation/0.1
+  timeout_seconds: 300
+  # The codes fixed in the plan (section 6.9), with the FDIC's own descriptions.
+  deposit_moving_codes:
+    211: "Failure - Whole Institution"
+    213: "Merger - Assisted"
+    215: "Failure Multiple Acquirer"
+    216: "Bridge Bank Resolution"
+    217: "Passthrough Receivorship/Conservatorship Resolution"
+    221: "Absorbtion - Without Assistance"
+    222: "Consolidated - Without Assistance"
+    223: "Merger -Without Assistance"
+    224: "Affiliated Institution Merger (Pooling) (i.e. Corporate Reorganization"
+    225: "Partial Purchase & Assumption - Without Assistance"
+    230: "Closing - Failure Payoff"
+    235: "Rtc Supervised Payoffs, Liquidations, and Closings"
+    240: "Closing - Voluntary"
+    260: "Bank Closed by Chartering Agency Pending Sale"
+    712: "Branch Purchased"
+    713: "Branch Acquired in Merger/Consolidation/Failure"
+    722: "Branch Sold"
+    724: "Branches Divested in Multiple Acquirer Failure"
+    810: "Participated in Absorbtion/Consolidation/Merger"
+    811: "Participated in FDIC Assisted Merger"
+    812: "Rtc Assisted Merger"
+    820: "Phantom (Interim) Corporate Reorganization"
+    830: "Open Bank Assistance"

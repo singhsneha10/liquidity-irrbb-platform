@@ -1,0 +1,27 @@
+# Early-warning indicators (Phase 9 follow-up: recommendations R3 and R4 of
+# docs/validation_report.md), validated by riskplatform.config.EarlyWarningConfig.
+#
+# Like the internal limits (config/limits.yaml), these are the bank's own judgement, not
+# regulatory parameters. An indicator in "alert" makes the pipeline report findings (exit 2).
+# Both are measured on the latest business day, for every entity and the group.
+
+retail_outflow:
+  # Fall in retail deposits (stable and less stable separately) over this many business days,
+  # all currencies added at the first day's FX rates, as in the run-off backtest (so exchange-rate
+  # moves are not mistaken for withdrawals). 20 business days = 28 calendar days.
+  business_days: 20
+  threshold: 0.03  # alert above 3%
+  why: >-
+    About the 99th percentile of 4-week US system-wide deposit outflows since 1973 (2.92% for all
+    commercial banks, validation test T4): a fall this large is rare for the system, and far below
+    the LCR's 5% and 10% run-off rates, so it warns before the regulatory assumptions are reached.
+
+break_even_run_off:
+  # The single retail run-off rate (both categories, each at least its rulebook rate) at which
+  # the entity's LCR would fall to the internal LCR limit (config/limits.yaml), per rulebook.
+  threshold: 0.20  # alert below 20%
+  why: >-
+    Judgement, equal to the one-day net deposit outflow ("20 percent or more") that each of Silicon
+    Valley Bank, Signature Bank and First Republic suffered in March 2023 (FDIC staff study, May
+    2026; validation test T5). Below it, a single day like theirs would take the LCR to its limit.
+    Test T3 found 19.2% to 29.4% across the entities on 2026-10-23.

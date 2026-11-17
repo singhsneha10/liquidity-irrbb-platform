@@ -87,7 +87,7 @@ def test_irrbb_section_flags_the_outlier(board, text):
     assert text.count("OUTLIER") == sum(
         int(data.eve_against_tier1(board.con, r)["outlier"].sum()) for r in report.REGIMES
     )
-    assert "UK ICAA 9.4A" in text and "SRP31.82" in text
+    assert "UK ICAA 9.4A, SS31/15 2.7B" in text and "SRP31.82" in text
 
 
 def test_drivers_and_data_quality_are_the_runs(board, text):
@@ -125,3 +125,12 @@ def test_run_report_and_the_command(run, tmp_path, capsys):
     empty = ["--source", "local", "--data", str(tmp_path / "none"), "--out", str(tmp_path / "x")]
     assert main(empty) == 1
     assert not (tmp_path / "x").exists()
+
+
+def test_every_early_warning_alert_is_in_the_report(board, text):
+    alerts = data.early_warning_alerts(board.con)
+    assert "Early-warning indicators" in text
+    for _, a in alerts.iterrows():
+        detail = report.REGIMES.get(a["regime"], a["regime"]) if a["regime"] else a["category"]
+        assert f"{a['who']} {detail} {a['value']:.2%}" in text
+    assert text.count("ALERT") == len(alerts)

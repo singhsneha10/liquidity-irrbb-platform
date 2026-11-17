@@ -35,4 +35,4 @@ limits:
     source: eve_tier1    # worst aggregated EVE loss / Tier 1, from the IRRBB risk table
     # Equal to the outlier threshold, so a breach and an IRRBB outlier agree, except at exactly
     # 15.0%: the limit is breached when reached (>=), the outlier test needs a loss above it (>).
-    why: "Equal to the supervisory outlier test (Basel SRP31.82; UK SS31/15): a loss of 15% of Tier 1 or more is a breach"
+    why: "Equal to the supervisory outlier test (Basel SRP31.82; UK ICAA 9.4A, SS31/15 2.7B): a loss of 15% of Tier 1 or more is a breach"

@@ -16,6 +16,7 @@ Each result table is a DuckDB view over that run's Parquet files, plus `run` (wh
     limit_changes, metric_changes, balance_drivers
                                 from changes/<run_id>/ (the latest day against the one before)
     quarantine                  from quality_runs/<run_id>/ (rows the quality layer held back)
+    early_warning               from early_warning/<run_id>/ (the early-warning indicators)
 
 From S3, the run's quality, metrics, IRRBB, limits and changes files (about 1 MB) are first downloaded into --cache
 (default data/cache/, same layout as data/), once per run, and queried on local disk. Labelled
@@ -57,6 +58,7 @@ TABLES = {  # view name -> the stage folder its file is in
     "metric_changes": "changes",
     "balance_drivers": "changes",
     "quarantine": "quality_runs",
+    "early_warning": "early_warning",
 }
 STAGES = sorted(set(TABLES.values()))
 COMPLETE = ".complete"  # cache_dir/.complete/<run_id> exists once a run is fully downloaded

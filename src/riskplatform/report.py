@@ -189,6 +189,40 @@ def limits_section(con, levels: dict[str, float]) -> list:
     return [table, Spacer(1, 2), intro]
 
 
+INDICATOR_NAMES = {"retail_outflow": "Retail outflow, 4 weeks",
+                   "break_even_run_off": "Break-even run-off"}  # fmt: skip
+
+
+def early_warning_section(con) -> list:
+    """The early-warning indicators in alert (config/early_warning.yaml)."""
+    alerts = data.early_warning_alerts(con)
+    note = Paragraph(
+        "Alert when a 4-week retail outflow is above its threshold (about the US system's 99th "
+        "percentile), or when the run-off rate that would take the LCR to the 110% limit is "
+        "below its threshold. The bank's own judgement, from the model validation.",
+        STYLES["small"],
+    )
+    if alerts.empty:
+        return [Paragraph("No early-warning indicator is in alert.", STYLES["body"]), note]
+    rows = [["Indicator", "Who", "Detail", "Value", "Threshold", "Status"]]
+    for _, a in alerts.iterrows():
+        detail = REGIMES.get(a["regime"], a["regime"]) if a["regime"] else a["category"]
+        threshold = ("below " if a["indicator"] == "break_even_run_off" else "above ") + pct(
+            a["threshold"]
+        )
+        rows.append([INDICATOR_NAMES[a["indicator"]], a["who"], detail,
+                     f"{a['value']:.2%}", threshold, "ALERT"])  # fmt: skip
+    widths = [36 * mm, 20 * mm, 40 * mm, 20 * mm, 26 * mm]
+    widths.append(WIDTH - sum(widths))
+    table = _table(rows, widths, numeric_from=3)
+    table.setStyle(TableStyle([("ALIGN", (5, 0), (5, -1), "LEFT")]))
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (5, 1), (5, -1), colors.HexColor(STATUS["warning"])),
+        ("FONT", (5, 1), (5, -1), "Helvetica-Bold", 7.5),
+    ]))  # fmt: skip
+    return [table, Spacer(1, 2), note]
+
+
 def lcr_chart(con, regime: str = "basel") -> Drawing:
     """The LCR of each entity and the group over the run, with the minimum and the limit."""
     trend = data.ratio_trend(con, "lcr", regime)
@@ -286,7 +320,7 @@ def irrbb_section(con) -> list:
     _status_cells(table, rows, column=5)
     note = Paragraph(
         "Outlier test: the worst EVE loss over the six standardised shocks against 15% of "
-        "Tier 1 (Basel SRP31.82-31.83; UK ICAA 9.4A). NII: the change in net interest income over the next "
+        "Tier 1 (Basel SRP31.82-31.83; UK ICAA 9.4A, SS31/15 2.7B). NII: the change in net interest income over the next "
         "12 months under the parallel shocks, constant balance sheet.",
         STYLES["small"],
     )
@@ -394,6 +428,7 @@ def write_report(dashboard: data.Dashboard, out: str | Path) -> ReportRun:
         *headline(con),
         Paragraph("Limits at warning or breach", STYLES["h2"]),
         *limits_section(con, data.thresholds(dashboard)),
+        _section("Early-warning indicators", early_warning_section(con)),
         Paragraph("Liquidity", STYLES["h2"]),
         *liquidity_section(con),
         _section("Interest rate risk in the banking book", irrbb_section(con)),

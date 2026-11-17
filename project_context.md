@@ -3,12 +3,13 @@
 **Project:** Automated Liquidity & Interest Rate Risk Monitoring Platform
 **Goal:** A production-quality, end-to-end, deployed portfolio project that impresses senior
 people at banks such as JPMorgan (Risk Analyst roles). Business use comes later.
-**Last updated:** 2026-11-16 (evening, personal PC). Phases 7 and 8 code complete, and **Phase 7
-is deployed to AWS** (checklist A-E done; see "Deployment checklist"). Only F is left: back up
-the Terraform state (author) and, when wanted, turn the daily schedule on (personal PC only).
-597 tests. Next: **Phase 9 (model validation)**, which needs no AWS and can be done on any PC.
-Uncommitted when written: this file and `infra/README.md` (approval rule, Windows push notes,
-`--provenance=false`). The plan-file ignores and their tests were committed in `e4f3fa3`.
+**Last updated:** 2026-11-17 (work PC). **Phase 9 (model validation) is done** (9.1-9.8):
+`docs/validation_report.md`, overall rating **AMBER** after R1 (was RED; see "Design
+decisions", Phase 9). Phase 7 is
+deployed to AWS (2026-11-16); only checklist F is left (back up the Terraform state, schedule on
+when wanted; personal PC only). 661 tests. Next: the open items in "Next steps", then Phase 10.
+9.1-9.7 were committed by the author step by step; this file and the README line (9.8) were
+**not committed when this was written**.
 
 ## Working rules
 1. Think of the project as a whole; build step by step with the big picture in mind.
@@ -60,7 +61,7 @@ data: hand-worked examples written before the code, and proofs against published
 - Data quality layer with quarantine (done)
 - LCR, NSFR and IRRBB (NII and EVE, six Basel shocks), all done, as pure functions, with
   regulatory parameters in YAML; **Basel and UK PRA rulebooks side by side**
-- Model validation module: backtest deposit run-off assumptions
+- Model validation module: backtest of the LCR retail deposit run-off rates (done, Phase 9)
 - Internal limits with warning / breach and "what changed since yesterday" (done, Phase 8)
 - Outputs: Tableau-ready CSV extracts and a daily PDF report (done, Phase 8); Excel export and
   optional AI commentary not done (all numbers from code, never from the model)
@@ -217,6 +218,83 @@ data: hand-worked examples written before the code, and proofs against published
   (it breached at 75 days). So the limit email arrives every weekday until the EVE book
   changes. The whole pipeline takes about 30 s at 76 days.
 
+- **Phase 9: model validation of the LCR retail run-off rates (decided and done 2026-11-17).**
+  What: the 5% (stable; LCR40.7, UK Art 24(1)) and 10% (less stable; LCR40.13, Art 25(1))
+  30-day run-off rates. Report: `docs/validation_report.md`, in model-risk style; sections 1-5
+  (scope, tests, data, criteria, limitations) were WRITTEN before any data was fetched, and
+  first COMMITTED (`2969e03`, with the H.8 code) after the data was downloaded but before any
+  result was calculated (pre-registration; a separate earlier commit would have been cleaner).
+  Section 9 logs every later change to them (two, both before any result, neither changing a
+  criterion). Code: `src/riskplatform/model_validation/` (named so
+  because `validation/` already means the raw data checks). One command: `riskplatform-validate`.
+  - Data: Fed H.8 weekly deposits from FRED, not seasonally adjusted, 1973-2026, IDs checked on
+    FRED: `DPSACBW027NBOG` (all commercial banks), `DPSSCBW027NBOG` (small banks). Saved by
+    `python -m riskplatform.model_validation.h8` to `data/external/h8_deposits.parquet` with
+    provenance and SHA-256 (FRED marks it copyrighted: not committed). Checks refuse a download
+    with non-positive values, repeated dates, non-Wednesdays, wrong order, a missing week, or a
+    reply that is not FRED's CSV. Learned from the Fed's H.8 notes: panel shifts and mergers
+    are removed from past LEVELS, but nonbank structure activity of $5bn+ only from growth
+    rates (limitation 7); the Fed's structure notes start in October 1989.
+  - Tests: T1 backtest (4-week outflows, max(0, 1 - D(t+28d)/D(t)), 5 weeks as a check);
+    T2 detection check on the synthetic bank; T3 LCR sensitivity on the latest validated day
+    (both retail rates set to the worst T1 outflow; break-even rates by bisection); T4 99th
+    percentile benchmark. Ratings green/amber/red fixed in advance; overall = worst of T1 and T3
+    if T2 is green, else inconclusive.
+  - Stress episode (`config/generator_stress.yaml`, off by default; `GeneratorConfig.stress`):
+    BANK_UK sterling deposits lose 10% (stable) and 20% (less stable) over 15 business days
+    from 2026-09-14, paid from central bank reserves then government bonds (each kept at 1% at
+    least), so the books still balance and the LCR falls (186% -> 118%). First version did not
+    pay the withdrawals and the stressed LCR ROSE: caught and fixed. Runs too large to pay are
+    refused. No random draws: days before the start are bit-identical.
+  - Results (H.8 to 2026-11-04, SHA-256 `f68ce321...`): T1 all banks AMBER (worst 6.43%, every
+    spell a year-end, quarter-end or 9/11 spike unwinding); T1 small banks RED (10.69%, one week
+    27 Mar - 3 Apr 1985 that looks like a panel reclassification but the Fed notes cannot
+    confirm, so it counts; without it 4.98%; since Oct 1989 3.87%); T2 GREEN (planted 9.39%,
+    found 9.30%); T3 GREEN (lowest stressed LCR 146.0%; break-even 19.2-29.4% at 110%,
+    22.5-33.6% at 100%; a 25% run takes BANK_EU and BANK_UK below 100%); T4 2.92% and
+    2.41%. **Overall RED.** Recommendations R1-R7 in the report (resolve 1985 first).
+  - **Re-rated 2026-11-17 (R1, after the results; author's decision, logged in the report's
+    section 9):** the 1985 fall is a confirmed break: FRED's large-bank deposits
+    (`DPSLCBW027NBOG`) start on 1985-04-03, and the H.8 release of 5 April 1985 (FRASER) split
+    banks by assets under/over $1.4bn ($902.7bn under $1.4bn vs FRED's reconstructed $316.4bn).
+    Excluded via `confirmed_breaks` in `config/validation.yaml` (results keep the
+    `..._before_breaks` ratings). Small banks GREEN (worst 4.98%); T3 stress 6.43%. That exposed
+    a flaw: setting both rates to 6.43% LOWERED the 10% less-stable rate and raised the
+    "stressed" LCR; fixed so a stress never lowers a rulebook rate (lowest LCR 161.6%, GREEN).
+    T4 small banks 2.18%. **Overall AMBER** (only the all-bank calendar spikes; R5).
+  - Frameworks, checked against the official texts 2026-11-17: **SR 11-7 is superseded by
+    SR 26-2 (Fed/OCC/FDIC, 17 April 2026)**; SR 26-2's "model" excludes deterministic rule-based
+    processes. **PRA SS1/23** current version April 2026 (effective 23 April 2026) applies to
+    firms with internal model approval; followed here as good practice (3.3(b)(i)-(iii), 4.4).
+    Independent validation (SS1/23 Principle 4) is NOT met: the builder validated its own work.
+  - Keeping the report true: `tests/test_validation_run.py` checks the report's headline numbers
+    equal the code (T2/T3 everywhere; T1/T4 only where the H.8 file exists, skipped in CI). It
+    caught a rounding error in the report (173.1% -> 173.0%) on its first run.
+
+- **Early-warning indicators (R3/R4, 2026-11-17; `riskplatform/early_warning.py`,
+  `config/early_warning.yaml`):** retail outflow over 20 business days (fixed FX, alert above
+  3%, about the T4 99th percentile) and break-even run-off to the 110% LCR limit (alert below
+  20%, the one-day loss of each 2023 failed bank), per entity and group (and per rulebook). They
+  reuse the backtest's outflow measure and T3's `break_even`. Pipeline stage `early_warning`
+  after `changes` (findings if any alert), S3, query view `early_warning`, Dagster asset
+  `early_warning_indicators` (WARN check), and shown in the email (an indicator alone now
+  sends it; subject adds ", K early warnings"), dashboard Limits tab, PDF section and
+  `early_warning.csv`. Today: break-even alerts for BANK_EU (19.18% / 19.45%) and BANK_UK
+  Basel (19.99%); retail outflow quiet, and alerts at BANK_UK on the planted run (tested).
+
+- **T5 single-bank runs (R2 case study, 2026-11-17; report only, no rating, added after the
+  results and logged in the report's section 9):** documented March 2023 runs from the FDIC
+  staff study "Dissecting Depositor Flight" (May 2026, banks' core systems): each of SVB,
+  Signature, First Republic lost 20%+ in one day; 47-50% in 3 business days; 36-60% over 7-17
+  March. In `config/validation.yaml` (`single_bank_runs`) with each quoted sentence (a test
+  checks figure vs quote). T5 reruns the LCR at each rate (`sensitivity.t5`): at 20%, 3 of 8
+  results below 110%, none below 100%; at 36%+, every entity and the group below 100% (lowest
+  49.5%). Also checked: the Fed's SVB review says "over $40 billion" on 9 March; the earlier
+  "about a quarter in one day" claim was replaced everywhere by the sourced figures. The
+  early-warning 20% break-even threshold now rests on the 20% one-day figure. FDIC API checked
+  (quarterly Call Reports): SVB 24735, Signature 57053, First Republic 59017; SVB has no
+  2023 Q1 report, First Republic fell 40.8% in 2023 Q1.
+
 ## Status
 | Phase | Status |
 |---|---|
@@ -229,7 +307,8 @@ data: hand-worked examples written before the code, and proofs against published
 | 6. Testing and hardening | Done: one-command pipeline with exit codes (6.1), shared logging + run log files (6.2), edge cases: missing curve now a STOP, missing book a WARNING, LCR 0/0, empty folders (6.3), limits moved to config (6.4), metrics/IRRBB about 6x faster, slow tests shortened (6.5), 98% branch coverage and 16/16 planted formula bugs caught (6.6). 423 tests, about 1 minute. |
 | 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). **Deployed 2026-11-16** from the personal PC: billing alarm, platform (27 resources), image `0.1.0`, one manual Fargate run (1 min 36 s, exit 2, 191 files to S3, limit email received). Daily schedule still **off**. |
 | 8. Alerts and dashboard | Done: limits config + utilisation (8.1), limits stage + S3 + query view + Dagster asset (8.2), SNS limit alert email (8.3), what changed since yesterday (8.4), Streamlit dashboard (8.5), Tableau CSV extracts (8.6), daily PDF report (8.7), README + `docs/reporting.md` + this file (8.8). 597 tests, 2 to 6 minutes (varies from run to run; not yet profiled). |
-| 9-10. Model validation, deploy | Not started |
+| 9. Model validation | Done: scope and criteria before results (9.1), Fed H.8 deposits from FRED (9.2), planted deposit-run stress episode (9.3), backtest T1 + detection check T2 (9.4), LCR sensitivity T3 + benchmark T4 (9.5), `riskplatform-validate` and report consistency tests (9.6), conclusion, recommendations and SS1/23 / SR 26-2 framing (9.7), this file (9.8). R1 done: the 1985 break confirmed and excluded, overall AMBER (was RED). |
+| 10. Public deploy | Not started |
 
 ## Deployment checklist (personal PC; decided 2026-11-16)
 **All Terraform work happens on the personal PC only.** Its `terraform.tfstate` files are the
@@ -264,12 +343,46 @@ device without them would try to create everything again. Keep developing on eit
   ECR can scan the image (`0.1.0` has no scan result); saved plans (`tfplan`) are now ignored by
   Git and Docker.
 
-**Still to do on the personal PC only (F):**
-- Back up `infra/terraform/billing/terraform.tfstate` and `infra/terraform/platform/terraform.tfstate`
-  somewhere private (author; not Git, not public storage).
-- Turn the schedule on when wanted (`schedule_enabled = true` in `platform/terraform.tfvars`,
-  plan, approve, apply): about 7-9 INR/month, one limit email per weekday while BANK_UK breaches.
-- Any future AWS change (new image tag, Terraform edit) also happens on the personal PC.
+**Next session on the personal PC: release 0.2.0, back up the state, schedule on (written
+2026-11-17).** AWS still runs image `0.1.0` (Phases 7-8.2 only): no changes, early-warning,
+extracts, PDF or dashboard data. About 30-60 minutes, mostly Docker build and push. Working rule 9
+applies: Claude may run the commands, but shows each plan in plain words and waits for "yes"
+before anything that creates, changes or costs (push, apply, run-task, schedule).
+
+G1. **Code and checks.** `git pull` (branch `sneha`), `pip install -e ".[dev,orchestration,dashboard]"`,
+    then `pytest; ruff check .; ruff format --check .` (682 tests; 2 report tests skip without the
+    H.8 file). Stop if anything fails.
+G2. **Back up the Terraform state first** (before any apply): copy
+    `infra/terraform/billing/terraform.tfstate` and `infra/terraform/platform/terraform.tfstate`
+    (and their `.backup` files if present) somewhere private, not Git and not a public drive.
+G3. **Sign in:** `$env:AWS_PROFILE = "riskplatform"`; `aws sso login --profile riskplatform`;
+    `aws sts get-caller-identity`.
+G4. **Build and push `0.2.0`** (`infra/README.md` section 3, with the Windows login workaround
+    there and `--provenance=false`, so ECR scans it), tag `0.2.0` instead of `0.1.0`. Tags are
+    immutable: if a push half-fails, use `0.2.1`, never re-push `0.2.0`. ECR keeps the last 10.
+G5. **Point the task at it:** `image_tag = "0.2.0"` in `infra/terraform/platform/terraform.tfvars`
+    (the real file; the example already says 0.2.0), then `terraform plan` and **read it with
+    Claude before applying**. Expected: the ECS task definition is replaced (a new revision; the
+    old one is deregistered), and the schedule, the only resource that names the revision
+    (`schedule.tf`), is updated in place. The scheduler's permission uses the ARN without the
+    revision, so IAM does not change. No bucket, role, topic or budget is touched. Then
+    `terraform apply`.
+G6. **One manual run** (`infra/README.md` section 4) and `aws logs tail /riskplatform/pipeline
+    --follow`. Expected: every stage including `early_warning`, then `Pipeline FINDINGS (exit
+    code 2)`. One email arrives with the subject ending in ", N early warnings" and an
+    "Early-warning indicators in alert" section (BANK_EU and BANK_UK break-even alerts). In S3,
+    `early_warning/<run>/` and `reports/<run>/daily_report.pdf` appear; `latest.json` points at
+    the run. Check from the laptop: `riskplatform-report --source s3` and
+    `python -m riskplatform.query --source s3 --tables` (the `early_warning` view is listed).
+G7. **Schedule on:** `schedule_enabled = true` in the same `terraform.tfvars`, `terraform plan`
+    (expected: only the schedule changes, from DISABLED to ENABLED), then `terraform apply`.
+    It runs weekdays at 06:00 London. Cost: about 0.08 USD (7-9 INR with GST) a month. Expect one
+    limit email every weekday while BANK_UK breaches its EVE limit and the break-even
+    indicators alert.
+G8. **Next weekday:** check the 06:00 run (`aws logs tail /riskplatform/pipeline --since 2h`),
+    and that the email arrived. Back up the state files again after any apply.
+
+Any future AWS change (new image tag, Terraform edit) also happens on the personal PC only.
 
 **A. Get the code and prove it is green (nothing changes in the code tonight)**
 1. Commit and push this file from the work PC first (the 8.8 docs are already committed).
@@ -342,31 +455,28 @@ error to Claude); run Terraform from the work PC.
 "Removing everything" in `infra/README.md` (platform first, billing last).
 
 ## Next steps
-1. **Phase 9: model validation (next; any PC, no AWS).** Decided 2026-11-16: backtest the
-   retail deposit 30-day run-off rates (5% stable, 10% less stable; Basel LCR40.7 / LCR40.13,
-   UK LCR Art 24(1) / 25(1)) against **both** real public data (Federal Reserve H.8 weekly
-   deposits on FRED: all commercial banks and small banks, which carried the March 2023 run;
-   verify the series IDs on FRED first; save locally with provenance, do not commit) **and** a
-   planted synthetic stress episode (off by default, in its own `config/generator_stress.yaml`,
-   so default results do not change; keep the earlier-days-identical property). The synthetic
-   history alone is circular (balances drift +0.02%/day, vol 0.4%), hence the stress episode.
-   Proposed steps, **not yet approved by the author** (ask first): 9.1 scope and pass/fail
-   criteria written before any result; 9.2 fetch H.8; 9.3 stress episode in the generator;
-   9.4 backtest (rolling 30-day outflows, exceedances, worst, green/amber/red); 9.5 sensitivity
-   (LCR vs run-off, break-even run-off at 100% and at the 110% limit) and a simple benchmark
-   (99th-percentile 30-day outflow); 9.6 validation command writing every number to
-   `data/validation/`; 9.7 `docs/validation_report.md` in model-risk style; 9.8 this file. New
-   code in `src/riskplatform/model_validation/` (`validation/` already means data checks).
-   Check every citation (Fed H.8, PRA model-risk principles) against the official text.
+1. **Phase 9 follow-ups** (from `docs/validation_report.md`, section 7.2), most important first:
+   R1 DONE 2026-11-17 (1985 break confirmed and excluded; overall AMBER). R3/R4 DONE
+   2026-11-17 (early-warning indicators). R2 case study DONE 2026-11-17 (T5, below); R2 part 2
+   NEXT: distribution of quarterly deposit changes across all FDIC-insured banks (FDIC API,
+   free, no key; filter mergers with FDIC structure data). Author chose "both, case study first".
+   R3/R4 turn the break-even rates and the ~3% T4 percentile into early-warning indicators.
+   Ask the author before starting any of them.
 2. Phase 7 leftovers, **personal PC only**: back up the Terraform state; turn the schedule on when
    wanted (see "Deployment checklist", F). Decided before (done): failure alerts for exit codes
    except 0 and 2; limit alert email for findings; each run up to its own date (`--as-of today`).
-3. Open question: `config/limits.yaml` cites "UK SS31/15" for the 15% outlier test, while
-   `docs/irrbb_methodology.md`, `docs/reporting.md` and the PDF cite UK ICAA 9.4A. Check the
-   official text and make them agree.
-4. Profile the test suite (it varies from 2 to 6 minutes): `pytest --durations=20`.
-5. **Phase 9: model validation** (backtest deposit run-off assumptions); Phase 10: public deploy
-   of the dashboard.
+3. Resolved 2026-11-17: the UK 15% outlier test is ICAA 9.4A (the binding rule: calculate,
+   and notify the PRA "immediately" if EVE would decline by MORE than 15% of Tier 1), restated
+   in SS31/15 2.7B (current version October 2025, effective 1 July 2026), which adds "outlier
+   firm" status and a PRA review. Both were right, just incomplete; every file now cites
+   "ICAA 9.4A, SS31/15 2.7B". A new SS31/15 takes effect 1 January 2027: not yet reviewed.
+4. Done 2026-11-17, test suite profiled (`pytest --durations=30`): no slow test (slowest 6.4 s,
+   the top 30 about 1 minute of a 2-minute run). Running in parallel (pytest-xdist 3.8.0, 12
+   cores) took 99 s and then 201 s against 104-123 s serially: the time is disk I/O on this PC
+   (many small Parquet writes, likely antivirus scanning), not CPU, so xdist was NOT added.
+   The 2-6 minute spread is the machine; nothing to fix in the tests.
+5. **Phase 10: public deploy of the dashboard** (not yet planned; decide hosting and cost with
+   the author first).
 6. Walk through the code in plain words (see "Walkthrough debt").
 7. Not covered by tests on purpose: the live HTTP fetch and `main()` in
    `ingestion/market_rates.py` (needs the internet; the parsers are tested on sample replies).
@@ -379,6 +489,8 @@ error to Claude); run Terraform from the work PC.
 - `docs/data_quality.md`, "Simplifications and limitations".
 - `docs/reporting.md`, "Assumptions and simplifications" (9 items), especially the internal
   limit values (judgement) and the repeating limit email.
+- `docs/validation_report.md`, section 5 (7 limitations, stated before the results) and section
+  7.3 (what the validation is and is not: good practice, not independent).
 - Outlier thresholds in `config/quality.yaml` (review triggers, chosen by judgement).
 
 ## Walkthrough debt (code written but not yet explained line by line to the author)
@@ -405,6 +517,13 @@ limit id with the group's empty entity, `balance_drivers` volume / FX split); `d
 hover selection, `st.cache_resource` with a cursor per page view); `extracts.py` (`_view_sql`,
 `_clean`, the latest/ copy); `report.py` (ReportLab platypus story, `KeepTogether`, the LinePlot
 chart, invariant mode).
+Added in Phase 9: `model_validation/h8.py` (the checks, provenance and the hash check on load),
+`StressEpisode` in `config.py` and `stress_factors` / `pay_withdrawals` in
+`ingestion/generate.py` (geometric daily fraction, paying in order down to a floor),
+`model_validation/backtest.py` (`forward_outflow` by rows, `spells`, fixed-FX
+`retail_deposits`, `planted_size`), `model_validation/sensitivity.py` (`with_retail_run_off`,
+the bisection in `break_even`) and `model_validation/run.py` (the bank built fresh through the
+quality layer, exit codes).
 
 ## How to run
 First time on a new machine:
@@ -442,6 +561,12 @@ pip install -e ".[dashboard]"; riskplatform-dashboard   # or: make dashboard (ht
 riskplatform-extracts                            # data/extracts/<run>/ and data/extracts/latest/
 riskplatform-report                              # data/reports/<run>/daily_report.pdf
 ```
+Model validation (Phase 9; needs the internet once for the H.8 data):
+```
+python -m riskplatform.model_validation.h8       # saves data/external/h8_deposits.parquet (+ provenance)
+riskplatform-validate                            # T1-T4 -> data/validation/<UTC time>/ (exit 2: not all green)
+python -m riskplatform.ingestion.generate --config config/generator_stress.yaml   # the planted run
+```
 Orchestration and cloud:
 ```
 pip install -e ".[orchestration]"; dagster dev     # Dagster UI with the assets and schedule
@@ -475,8 +600,9 @@ All data is written under `data/` (ignored by Git).
 2. On the other device: `git pull`, then create or refresh the venv (see "How to run":
    `pip install -e ".[dev]"`, plus `".[orchestration]"` for the Dagster UI and `".[dashboard]"`
    for Streamlit), and check the suite is green: `pytest`, `ruff check .`, `ruff format --check .`
-   (597 tests, 2 to 6 minutes).
-   `data/` is not in Git: run `riskplatform-run --as-of today` once to recreate it.
+   (661 tests, 2 to 6 minutes; on a PC without the H.8 file, 2 report tests are skipped).
+   `data/` is not in Git: run `riskplatform-run --as-of today` once to recreate it, and
+   `python -m riskplatform.model_validation.h8` for the H.8 deposits (Phase 9).
 3. Ask Claude to read this file and the code base, and say the step, e.g. "Phase 9" or
    "deploy step 7.5".
 Note: if the PC sleeps during a long run, timings include the sleep (on 2026-11-14 a 4-minute

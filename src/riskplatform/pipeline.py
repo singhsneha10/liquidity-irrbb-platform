@@ -1,5 +1,5 @@
 """The whole daily pipeline in one command: generate -> raw checks -> quality -> metrics ->
-IRRBB -> limits -> changes -> extracts -> report.
+IRRBB -> limits -> changes -> early warning -> extracts -> report.
 
 Run with:  python -m riskplatform.pipeline          (or: riskplatform-run, or: make run)
            python -m riskplatform.pipeline --config config/generator_real.yaml
@@ -22,13 +22,17 @@ Exit codes, so a scheduler can tell a broken run from a run that found something
      IRRBB outlier, or an internal limit (config/limits.yaml) is at warning or breach on the
      latest date. The numbers were produced; they need attention, not a rerun.
 
+The early_warning stage measures two indicators set in config/early_warning.yaml (retail
+deposit outflow over 4 weeks, and the run-off at which each LCR would reach its limit;
+riskplatform.early_warning); an indicator in alert is a finding (exit 2).
+
 The changes stage compares the latest day with the one before (riskplatform.changes, "what
 changed since yesterday"); it reports, so it is always ok and never changes the exit code. So
 do the extracts stage (Tableau-ready CSVs, riskplatform.extracts) and the report stage (the
 daily PDF, riskplatform.report).
 
 All outputs go under --data (default data/): raw/, validated/, quality_runs/, metrics/, irrbb/,
-limits/, changes/, extracts/, reports/ and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
+limits/, changes/, early_warning/, extracts/, reports/ and logs/pipeline-<UTC time>.log, the full log of each run (an error's traceback included).
 With backend s3 in --storage (config/storage.yaml, or RISKPLATFORM_STORAGE_BACKEND=s3), the
 run's outputs are then also copied to S3 under its run id (riskplatform.storage). Then, if any
 internal limit is at warning or breach and RISKPLATFORM_ALERT_TOPIC_ARN is set (in AWS), one
@@ -49,6 +53,7 @@ from typing import Literal
 from riskplatform.changes import run_changes
 from riskplatform.config import (
     AS_OF_HELP,
+    EarlyWarningConfig,
     GeneratorConfig,
     IrrbbRules,
     LadderConfig,
@@ -57,6 +62,7 @@ from riskplatform.config import (
     QualityConfig,
     ReportingConfig,
     StorageConfig,
+    load_early_warning_config,
     load_generator_config,
     load_ladder_config,
     load_limits_config,
@@ -65,6 +71,7 @@ from riskplatform.config import (
     load_storage_config,
     parse_as_of,
 )
+from riskplatform.early_warning import describe_indicator, run_early_warning
 from riskplatform.extracts import run_extracts
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import load_irrbb_regimes, run_irrbb
@@ -121,6 +128,7 @@ class PipelineInputs:
     irrbb: dict[str, IrrbbRules]
     limits: LimitsConfig
     reporting: ReportingConfig
+    early_warning: EarlyWarningConfig
 
 
 def load_inputs(
@@ -131,6 +139,7 @@ def load_inputs(
     as_of: date | None = None,
     limits_path: Path = Path("config/limits.yaml"),
     reporting_path: Path = Path("config/reporting.yaml"),
+    early_warning_path: Path = Path("config/early_warning.yaml"),
 ) -> PipelineInputs:
     """Load and validate every config first, so a bad config fails before any data is written.
 
@@ -145,6 +154,7 @@ def load_inputs(
         irrbb=load_irrbb_regimes(irrbb_dir),
         limits=load_limits_config(limits_path),
         reporting=load_reporting_config(reporting_path),
+        early_warning=load_early_warning_config(early_warning_path),
     )
 
 
@@ -208,6 +218,16 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
         since = f"{summary['latest_date']} against {summary['previous_date']}"
         return "ok", f"limits {moved or 'none'} ({since}); {run.out_dir}"
 
+    def early_warning_step() -> tuple[StageStatus, str]:
+        run = run_early_warning(
+            data_dir, seen["run_id"], cfg, inputs.liquidity,
+            inputs.limits.limits["lcr"].value, inputs.early_warning,
+        )  # fmt: skip
+        for alert in run.alerts:
+            logger.warning("Early warning %s", describe_indicator(alert))
+        detail = f"{len(run.alerts)} indicators in alert on {run.summary['as_of']}"
+        return ("findings" if run.alerts else "ok"), f"{detail}; {run.out_dir}"
+
     def extracts_step() -> tuple[StageStatus, str]:
         run = run_extracts(data_dir, seen["run_id"])
         return "ok", f"{len(run.manifest['files'])} CSV files; {run.out_dir} (and {run.latest_dir})"
@@ -224,6 +244,7 @@ def run_pipeline(inputs: PipelineInputs, data_dir: str | Path) -> PipelineResult
         ("irrbb", irrbb_step),
         ("limits", limits_step),
         ("changes", changes_step),
+        ("early_warning", early_warning_step),
         ("extracts", extracts_step),
         ("report", report_step),
     ]
@@ -249,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--irrbb", type=Path, default=Path("config/irrbb"))
     parser.add_argument("--limits", type=Path, default=Path("config/limits.yaml"))
     parser.add_argument("--reporting", type=Path, default=Path("config/reporting.yaml"))
+    parser.add_argument("--early-warning", type=Path, default=Path("config/early_warning.yaml"))
     parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--storage", type=Path, default=Path("config/storage.yaml"))
     parser.add_argument("--as-of", type=parse_as_of, help=AS_OF_HELP)
@@ -263,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         args.as_of,
         args.limits,
         args.reporting,
+        args.early_warning,
     )
     storage = load_storage_config(args.storage)  # checked before any data is written
     log_path = args.data / "logs" / f"pipeline-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.log"

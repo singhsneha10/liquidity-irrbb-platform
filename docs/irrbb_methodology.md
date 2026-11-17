@@ -86,7 +86,8 @@ For each scenario, the currencies are combined, then the worst scenario is the *
 - **UK:** losses, with gains offsetting at 50% (SS31/15 2.9B(iv)).
 
 The bank is an **outlier** if the EVE risk is above **15% of Tier 1** (Basel SRP31.82-31.83;
-UK ICAA 9.4A, which requires notifying the PRA).
+UK ICAA 9.4A, which requires notifying the PRA; SS31/15 2.7B calls such a firm an "outlier
+firm" and the PRA then reviews it).
 
 ### 5. Delta NII (`irrbb/nii.py`)
 

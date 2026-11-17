@@ -21,6 +21,7 @@ ORDER = [
     "irrbb_results",
     "limit_status",
     "daily_changes",
+    "early_warning_indicators",
     "tableau_extracts",
     "daily_report",
     "published_run",
@@ -76,7 +77,8 @@ def test_lineage_follows_the_pipeline_order():
         "irrbb_results": {"validated_data"},
         "limit_status": {"liquidity_metrics", "irrbb_results"},
         "daily_changes": {"limit_status"},
-        "tableau_extracts": {"daily_changes"},
+        "early_warning_indicators": {"daily_changes"},
+        "tableau_extracts": {"early_warning_indicators"},
         "daily_report": {"tableau_extracts"},
         "published_run": {"daily_report"},
     }
@@ -90,7 +92,12 @@ def test_a_full_run_materializes_every_asset_and_reports_the_checks(settings):
     validated = result.asset_materializations_for_node("validated_data")[0]
     assert validated.metadata["run_id"].value == run_id
     checks = {c.check_name: c for c in result.get_asset_check_evaluations()}
-    assert set(checks) == {"no_liquidity_breach", "no_irrbb_outlier", "no_limit_warning_or_breach"}
+    assert set(checks) == {
+        "no_liquidity_breach",
+        "no_irrbb_outlier",
+        "no_limit_warning_or_breach",
+        "no_early_warning_alert",
+    }
     assert all(
         c.severity == dg.AssetCheckSeverity.WARN for c in checks.values()
     )  # findings never block
