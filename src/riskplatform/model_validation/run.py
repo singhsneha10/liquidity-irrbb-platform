@@ -42,7 +42,9 @@ from riskplatform.config import (
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.logs import setup_logging
 from riskplatform.metrics.run import load_liquidity_regimes, read_validated
+from riskplatform.model_validation import allbanks
 from riskplatform.model_validation.backtest import GREEN, overall, run_off_rates, t1, t2
+from riskplatform.model_validation.fdic import FdicDataError, load_fdic
 from riskplatform.model_validation.h8 import H8DataError, load_h8
 from riskplatform.model_validation.sensitivity import latest_groups, t3, t4, t5
 from riskplatform.quality.run import run_quality
@@ -106,6 +108,7 @@ def run_validation(
         settings.confirmed_breaks,
     )  # fmt: skip
 
+    t6_result, t6_largest = run_t6(vcfg, rates)
     spells = [
         result.pop("spells_above_stable").assign(series=name) for name, result in t1_results.items()
     ]
@@ -144,6 +147,7 @@ def run_validation(
                     ]
                 ],
             },
+            "t6": t6_result,
             "ratings": {
                 **{f"t1_{name}": r["rating"] for name, r in t1_results.items()},
                 **{
@@ -157,7 +161,47 @@ def run_validation(
         "t1_spells": pd.concat(spells, ignore_index=True),
         "t3_table": t3_table,
         "t5_table": t5_table,
+        "t6_largest": t6_largest,
     }
+
+
+def run_t6(vcfg: ValidationConfig, rates) -> tuple[dict, pd.DataFrame | None]:
+    """T6 (report only): every FDIC bank's quarterly outflows. Skipped, and said so, if the FDIC
+    data has not been downloaded (it is not in Git)."""
+    try:
+        deposits, events, provenance = load_fdic(vcfg.fdic)
+    except FdicDataError as error:
+        logger.warning("T6 not run: %s", error)
+        return {"run": False, "reason": str(error)}, None
+    settings = vcfg.all_banks
+    levels = (rates.stable, rates.less_stable)
+    planned = allbanks.quarterly_outflows(
+        deposits, events, settings.min_previous_thousands, settings.excluded_by_hand
+    )
+    stricter = allbanks.quarterly_outflows(
+        deposits, events, settings.min_previous_thousands, settings.excluded_by_hand,
+        quarters_before=1,
+    )  # fmt: skip
+    largest = allbanks.largest(
+        allbanks.quarterly_outflows(deposits, events, settings.min_previous_thousands),
+        settings.top_n,
+        settings.top_min_previous_thousands,
+    )  # fmt: skip  (the list that was hand-checked: before the hand-check exclusions)
+    verdicts = {(h.cert, h.quarter.isoformat()): h for h in settings.hand_check}
+    largest["name"] = [verdicts.get((c, q.date().isoformat())) for c, q in
+                       zip(largest["cert"], largest["quarter"], strict=True)]  # fmt: skip
+    largest["verdict"] = [h.verdict if h else "not checked" for h in largest["name"]]
+    largest["name"] = [h.name if h else "" for h in largest["name"]]
+    return {
+        "run": True,
+        "fdic": {"deposits_sha256": provenance["deposits"]["sha256"],
+                 "events_sha256": provenance["events"]["sha256"],
+                 "last_quarter": provenance["deposits"]["last_quarter"]},
+        "planned": allbanks.summarise(planned, levels, settings.stress_years),
+        "supplementary_quarter_before": allbanks.summarise(stricter, levels, settings.stress_years),
+        "hand_check": {v: sum(h.verdict == v for h in settings.hand_check)
+                       for v in ("run", "missed_structure_event", "unresolved")},
+    }, largest  # fmt: skip
 
 
 def write_results(output: dict, out_dir: Path) -> None:
@@ -167,6 +211,8 @@ def write_results(output: dict, out_dir: Path) -> None:
     output["t1_spells"].to_csv(out_dir / "t1_spells.csv", index=False, date_format="%Y-%m-%d")
     output["t3_table"].to_csv(out_dir / "t3_sensitivity.csv", index=False)
     output["t5_table"].to_csv(out_dir / "t5_single_bank_runs.csv", index=False)
+    if output["t6_largest"] is not None:
+        output["t6_largest"].to_csv(out_dir / "t6_largest.csv", index=False, date_format="%Y-%m-%d")
 
 
 def main(argv: list[str] | None = None) -> int:
