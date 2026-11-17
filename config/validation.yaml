@@ -1,0 +1,16 @@
+# Model validation (Phase 9), validated by riskplatform.config.ValidationConfig.
+# What is validated and the pass / fail criteria: docs/validation_report.md (fixed before results).
+
+# Real deposit data: Federal Reserve H.8 "Assets and Liabilities of Commercial Banks in the
+# United States", weekly (ending Wednesday), billions of US dollars, NOT seasonally adjusted.
+# IDs checked on FRED on 2026-11-17. Fetch with:  python -m riskplatform.model_validation.h8
+# FRED marks the data as copyrighted: the saved file stays in data/ (ignored by Git).
+h8:
+  url: "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+  series:  # name used in the results -> FRED series ID
+    all_commercial_banks: DPSACBW027NBOG
+    small_banks: DPSSCBW027NBOG  # small domestically chartered: all but the largest 25 banks
+  output_file: data/external/h8_deposits.parquet
+  provenance_file: data/external/h8_deposits_provenance.json
+  user_agent: riskplatform-validation/0.1
+  timeout_seconds: 300

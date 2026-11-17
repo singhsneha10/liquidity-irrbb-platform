@@ -721,3 +721,33 @@ class ReportingConfig(_Strict):
 def load_reporting_config(path: str | Path) -> ReportingConfig:
     """Read a YAML file and return a validated ReportingConfig."""
     return ReportingConfig.model_validate(_read_yaml(path))
+
+
+class H8Source(_Strict):
+    """Federal Reserve H.8 deposit series on FRED (config/validation.yaml, h8)."""
+
+    url: str  # template with a {series} placeholder
+    series: dict[str, str] = Field(min_length=1)  # name in the results -> FRED series ID
+    output_file: Path
+    provenance_file: Path
+    user_agent: str = Field(min_length=1)
+    timeout_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _check(self) -> "H8Source":
+        if "{series}" not in self.url:
+            raise ValueError(f"url must contain {{series}}: {self.url}")
+        if len(set(self.series.values())) != len(self.series):
+            raise ValueError(f"each name needs its own FRED series ID: {self.series}")
+        return self
+
+
+class ValidationConfig(_Strict):
+    """Model validation settings (config/validation.yaml); criteria: docs/validation_report.md."""
+
+    h8: H8Source
+
+
+def load_validation_config(path: str | Path) -> ValidationConfig:
+    """Read a YAML file and return a validated ValidationConfig."""
+    return ValidationConfig.model_validate(_read_yaml(path))
