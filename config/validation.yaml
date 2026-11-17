@@ -129,3 +129,54 @@ fdic:
     812: "Rtc Assisted Merger"
     820: "Phantom (Interim) Corporate Reorganization"
     830: "Open Bank Assistance"
+
+# T6 settings (fixed in the plan, section 6.9) and the hand check of the 20 largest outflows
+# among banks over $1bn (done 2026-11-17, after the first results). Verdicts: run (kept),
+# missed_structure_event (excluded: the FDIC history shows an event within one quarter that
+# the same-quarter filter did not catch), unresolved (kept: no evidence either way).
+all_banks:
+  min_previous_thousands: 10000      # $10 million
+  stress_years: [2008, 2009, 2020, 2023]
+  top_n: 20
+  top_min_previous_thousands: 1000000  # $1 billion
+  hand_check:
+    - {cert: 19553, quarter: 2011-09-30, name: "Bank of Tokyo-Mitsubishi UFJ Trust Company", verdict: missed_structure_event,
+       evidence: "FDIC history 2011-12-31: change in insurance status, class and organisation type (became a non-depository trust company)"}
+    - {cert: 58303, quarter: 2012-12-31, name: "Ameriprise Bank, FSB", verdict: missed_structure_event,
+       evidence: "FDIC history 2013-01-31: change in class and organisation type, trust powers granted (deposit-taking ended)"}
+    - {cert: 34617, quarter: 2020-12-31, name: "State Farm Bank, F.S.B.", verdict: missed_structure_event,
+       evidence: "FDIC history 2021-03-30: Closing - Voluntary (deposits gone the quarter before)"}
+    - {cert: 34069, quarter: 2022-03-31, name: "Wilmington Trust, National Association", verdict: unresolved,
+       evidence: "No structure event near the quarter; an M&T Bank trust subsidiary, likely a move to an affiliate, not shown"}
+    - {cert: 30971, quarter: 2002-12-31, name: "Household Bank, FSB", verdict: missed_structure_event,
+       evidence: "FDIC history 2003-01-30: Closing - Voluntary and Branch Purchased by Panhandle State Bank"}
+    - {cert: 23360, quarter: 2011-06-30, name: "Citibank (South Dakota), N.A.", verdict: missed_structure_event,
+       evidence: "FDIC history 2011-07-01: Merger - Without Assistance into Citibank, N.A. (one day after the quarter)"}
+    - {cert: 18708, quarter: 2011-06-30, name: "Citicorp Trust Bank, fsb", verdict: unresolved,
+       evidence: "Only a regulator change near the quarter (2011-07-21); institution ended 2012-01-01"}
+    - {cert: 32957, quarter: 2012-06-30, name: "Prudential Bank & Trust, FSB", verdict: unresolved,
+       evidence: "No structure event near the quarter; voluntary closing only on 2023-03-31"}
+    - {cert: 58987, quarter: 2009-09-30, name: "Silverton Bridge Bank, National Association", verdict: missed_structure_event,
+       evidence: "FDIC history 2009-05-01: bridge bank created on the failure of Silverton Bank; this is its wind-down"}
+    - {cert: 13718, quarter: 2017-12-31, name: "Wells Fargo Trust Company, National Association", verdict: missed_structure_event,
+       evidence: "FDIC history 2018-03-28: change in insurance status, class and organisation type"}
+    - {cert: 58339, quarter: 2026-03-31, name: "Bank of China (US)", verdict: unresolved,
+       evidence: "A foreign bank's US office; no structure event recorded"}
+    - {cert: 33947, quarter: 2009-12-31, name: "TD Bank USA, National Association", verdict: unresolved,
+       evidence: "No structure event near the quarter; a TD Bank group bank, likely a move to an affiliate, not shown"}
+    - {cert: 27276, quarter: 2004-03-31, name: "Monogram Credit Card Bank of Georgia", verdict: unresolved,
+       evidence: "A credit-card bank; no structure event near the quarter (ended 2005-02-07)"}
+    - {cert: 21377, quarter: 2003-12-31, name: "Bank One Trust Company, National Association", verdict: unresolved,
+       evidence: "A trust bank; no structure event near the quarter"}
+    - {cert: 27330, quarter: 2023-03-31, name: "Silvergate Bank", verdict: run,
+       evidence: "Run on a crypto-focused bank; it announced its self-liquidation on 8 March 2023 (FDIC review of Signature Bank, 28 April 2023)"}
+    - {cert: 33690, quarter: 2011-09-30, name: "Banco Bilbao Vizcaya, S.A. (New York)", verdict: unresolved,
+       evidence: "A foreign bank's US office; no structure event recorded"}
+    - {cert: 27054, quarter: 2005-09-30, name: "Sumitomo Mitsui Trust Bank (U.S.A.) Limited", verdict: unresolved,
+       evidence: "A foreign-owned trust bank; no structure event near the quarter"}
+    - {cert: 58339, quarter: 2022-03-31, name: "Bank of China (US)", verdict: unresolved,
+       evidence: "A foreign bank's US office; no structure event recorded"}
+    - {cert: 33684, quarter: 2010-12-31, name: "Allied Irish Banks (New York)", verdict: unresolved,
+       evidence: "A foreign bank's US office during the Irish banking crisis; no structure event recorded"}
+    - {cert: 27076, quarter: 2009-09-30, name: "Wells Fargo Bank Southwest, National Association", verdict: missed_structure_event,
+       evidence: "FDIC history 2009-11-01: Merger - Without Assistance into Wells Fargo Bank, N.A."}

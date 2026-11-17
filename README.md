@@ -73,7 +73,9 @@ before any result. The overall rating is **AMBER**: calendar spikes in the all-b
 first RED was traced to a confirmed 1985 break in the Fed's data, and re-rated openly). In
 2008, 2020 and 2023, system-wide deposits fell by at most 3.9% in 4 weeks, well within the
 rates. But the documented single-bank runs of March 2023 (36% to 60% of deposits within days,
-per an FDIC study of the banks' own data) would take every entity below the LCR minimum. Details and
+per an FDIC study of the banks' own data) would take every entity below the LCR minimum. And
+across all 11,243 FDIC-insured banks since 2001, a month losing more than 10% of deposits is rare
+but recurring: 0.39% of quarters for banks over $10bn, 0.64% in crisis years. Details and
 recommendations: [validation report](docs/validation_report.md).
 
 [Daily report, page 1](docs/images/daily_report_page1.png)

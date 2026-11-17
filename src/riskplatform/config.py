@@ -902,6 +902,32 @@ class FdicSource(_Strict):
         return self
 
 
+class HandCheck(_Strict):
+    """One of the largest T6 outflows, checked by hand against the FDIC history."""
+
+    cert: int = Field(gt=0)
+    quarter: date
+    name: str = Field(min_length=1)
+    verdict: Literal["run", "missed_structure_event", "unresolved"]
+    evidence: str = Field(min_length=1)
+
+
+class AllBanksSettings(_Strict):
+    """Test T6 (plan: docs/validation_report.md, section 6.9)."""
+
+    min_previous_thousands: float = Field(gt=0)
+    stress_years: list[int] = Field(min_length=1)
+    top_n: int = Field(gt=0)
+    top_min_previous_thousands: float = Field(gt=0)
+    hand_check: list[HandCheck] = []
+
+    @property
+    def excluded_by_hand(self) -> set[tuple[int, date]]:
+        """(cert, quarter) of every outflow the hand check found to be a structure event."""
+        return {(h.cert, h.quarter) for h in self.hand_check
+                if h.verdict == "missed_structure_event"}  # fmt: skip
+
+
 class ValidationConfig(_Strict):
     """Model validation settings (config/validation.yaml); criteria: docs/validation_report.md."""
 
@@ -910,6 +936,7 @@ class ValidationConfig(_Strict):
     sensitivity: SensitivitySettings
     single_bank_runs: SingleBankRuns
     fdic: FdicSource
+    all_banks: AllBanksSettings
 
 
 def load_validation_config(path: str | Path) -> ValidationConfig:

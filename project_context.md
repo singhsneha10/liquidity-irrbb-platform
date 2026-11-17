@@ -295,6 +295,23 @@ data: hand-worked examples written before the code, and proofs against published
   (quarterly Call Reports): SVB 24735, Signature 57053, First Republic 59017; SVB has no
   2023 Q1 report, First Republic fell 40.8% in 2023 Q1.
 
+- **T6 all-bank outflows (R2 part 2, 2026-11-17; report only):** plan written and committed
+  BEFORE the data (`876ee97`, report section 6.9), then data downloaded with
+  `python -m riskplatform.model_validation.fdic` (FDIC BankFind API, free, no key; one page per
+  request, split by certificate or date range, never offset paging; about 15 minutes; 710,691
+  bank-quarters of 11,243 institutions, Q1 2001 to Q2 2026, plus 126,665 deposit-moving
+  structure events; files in `data/external/`, hashed, not committed). Measure: quarterly outflow
+  q per bank, monthly lower bound m = 1-(1-q)^(1/3); exclusions: first quarter, gap, structure
+  event in the quarter (23 codes in config), under $10mn, hand check. Code
+  `model_validation/allbanks.py`, wired into `riskplatform-validate` (skipped with a message if
+  the FDIC files are absent, as in CI). Results: 671,598 bank-quarters kept; m above 5% in
+  0.58% (above 10%: 0.14%); banks over $10bn 1.28% / 0.39% (stress years 2.18% / 0.64%). Hand
+  check of the 20 largest (banks over $1bn): 1 run (Silvergate, Q1 2023), 8 missed structure
+  events (7 moved deposits the quarter BEFORE a merger, closing or conversion), 11 unresolved
+  (trust banks, foreign-bank offices; kept). Supplementary (after results): also excluding the
+  quarter before each event barely changes the shares. The `allbanks` report test runs only
+  where the FDIC files exist.
+
 ## Status
 | Phase | Status |
 |---|---|
@@ -457,9 +474,9 @@ error to Claude); run Terraform from the work PC.
 ## Next steps
 1. **Phase 9 follow-ups** (from `docs/validation_report.md`, section 7.2), most important first:
    R1 DONE 2026-11-17 (1985 break confirmed and excluded; overall AMBER). R3/R4 DONE
-   2026-11-17 (early-warning indicators). R2 case study DONE 2026-11-17 (T5, below); R2 part 2
-   NEXT: distribution of quarterly deposit changes across all FDIC-insured banks (FDIC API,
-   free, no key; filter mergers with FDIC structure data). Author chose "both, case study first".
+   2026-11-17 (early-warning indicators). R2 DONE 2026-11-17: case study (T5) and all-banks
+   distribution (T6), both below. Remaining open recommendations: R5 (robust outflow measure, at
+   the next validation), R6 (rerun on new data), R7 (independent review).
    R3/R4 turn the break-even rates and the ~3% T4 percentile into early-warning indicators.
    Ask the author before starting any of them.
 2. Phase 7 leftovers, **personal PC only**: back up the Terraform state; turn the schedule on when

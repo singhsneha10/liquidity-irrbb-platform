@@ -302,6 +302,7 @@ this measure the rates are conservative for system-wide deposits.
 | T3 Sensitivity | GREEN | GREEN |
 | T4 Benchmark | report only (2.92% and 2.18%) | report only (2.92% and 2.41%) |
 | T5 Single-bank runs (section 6.8) | report only (added after the results) | not run |
+| T6 All-bank outflows (section 6.9) | report only (planned before its data) | not run |
 | **Overall** (worst of T1 and T3, as T2 is green) | **AMBER** | RED |
 
 ### 6.8 T5 Single-bank runs (case study, report only)
@@ -342,7 +343,7 @@ the group, under both rulebooks, falls below the 100% minimum (lowest 49.5%). Th
 run concentrated on one bank with concentrated, largely uninsured deposits. The FDIC study finds
 that roughly two-thirds or more of each bank's top depositors ran.
 
-### 6.9 T6 Single-bank outflows across all US banks: PLAN (written before the data)
+### 6.9 T6 Single-bank outflows across all US banks (plan, then results)
 
 **Status: plan only.** Written on 2026-11-17, before any quarterly deposit figure of the
 ~4,500 banks was downloaded or examined (recommendation R2, part 2). Results will follow this
@@ -407,6 +408,102 @@ excluded), or as unresolved (and kept), with the reason.
 - The merger filter may miss transfers. The hand check of the largest outflows is there for
   this.
 
+#### T6 results (2026-11-17)
+
+FDIC data downloaded on 2026-11-17: 710,691
+bank-quarters of 11,243 institutions, first quarter of 2001 to second quarter of 2026, every
+row the FDIC reported (SHA-256 `26c0a1d8...`), and 126,665
+deposit-moving structure events. Following the plan, **671,598 bank-quarters are
+kept**. Excluded: 11,243 first quarters,
+2 gaps, 9,728
+with a structure event, 18,112 under $10 million, and
+8 found by the hand check (below).
+
+**Implied monthly outflow m** (a lower bound on the worst month in the quarter), 2001-2026:
+
+| Deposits before | Bank-quarters | Median | 90th | 99th | 99.9th | Above 5% | Above 10% |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| All banks | 671,598 | 0.00% | 1.28% | 3.95% | 11.91% | 0.58% | 0.14% |
+| Under $1bn | 613,414 | 0.00% | 1.30% | 3.88% | 11.31% | 0.54% | 0.13% |
+| $1bn to $10bn | 48,912 | 0.00% | 1.08% | 4.88% | 15.07% | 0.96% | 0.29% |
+| Over $10bn | 9,272 | 0.00% | 1.11% | 5.67% | 22.77% | 1.28% | 0.39% |
+
+**In stress years** (2008, 2009, 2020, 2023) **and other years**, share of bank-quarters with
+m above the run-off rates:
+
+| Deposits before | Stress years: above 5% | above 10% | Other years: above 5% | above 10% |
+|---|---:|---:|---:|---:|
+| All banks | 0.70% | 0.17% | 0.56% | 0.14% |
+| Under $1bn | 0.63% | 0.15% | 0.52% | 0.12% |
+| $1bn to $10bn | 1.17% | 0.32% | 0.91% | 0.29% |
+| Over $10bn | 2.18% | 0.64% | 1.10% | 0.34% |
+
+**The hand check of the 20 largest outflows** (banks over $1 billion; before the hand-check
+exclusions). Each was looked up in the FDIC's institution records and its full structure history
+within a quarter either side, under any change code. Verdicts and evidence are in
+`config/validation.yaml` (`all_banks.hand_check`):
+
+| # | Bank | Quarter | Deposits before -> after ($bn) | m | Verdict |
+|---:|---|---|---|---:|---|
+| 1 | Bank of Tokyo-Mitsubishi UFJ Trust Company | 2011-09-30 | 1.63 -> 0.00 | 100.0% | missed structure event (excluded) |
+| 2 | Ameriprise Bank, FSB | 2012-12-31 | 4.45 -> 0.00 | 100.0% | missed structure event (excluded) |
+| 3 | State Farm Bank, F.S.B. | 2020-12-31 | 10.14 -> 0.00 | 96.3% | missed structure event (excluded) |
+| 4 | Wilmington Trust, National Association | 2022-03-31 | 11.12 -> 0.01 | 89.8% | unresolved (kept) |
+| 5 | Household Bank, FSB | 2002-12-31 | 5.23 -> 0.06 | 77.3% | missed structure event (excluded) |
+| 6 | Citibank (South Dakota), N.A. | 2011-06-30 | 50.12 -> 0.92 | 73.6% | missed structure event (excluded) |
+| 7 | Citicorp Trust Bank, fsb | 2011-06-30 | 6.30 -> 0.13 | 72.4% | unresolved (kept) |
+| 8 | Prudential Bank & Trust, FSB | 2012-06-30 | 1.69 -> 0.05 | 69.1% | unresolved (kept) |
+| 9 | Silverton Bridge Bank, National Association | 2009-09-30 | 1.51 -> 0.05 | 66.9% | missed structure event (excluded) |
+| 10 | Wells Fargo Trust Company, National Association | 2017-12-31 | 6.76 -> 0.85 | 50.0% | missed structure event (excluded) |
+| 11 | Bank of China (US) | 2026-03-31 | 13.96 -> 1.80 | 49.5% | unresolved (kept) |
+| 12 | TD Bank USA, National Association | 2009-12-31 | 30.96 -> 5.58 | 43.5% | unresolved (kept) |
+| 13 | Monogram Credit Card Bank of Georgia | 2004-03-31 | 3.10 -> 0.57 | 43.0% | unresolved (kept) |
+| 14 | Bank One Trust Company, National Association | 2003-12-31 | 1.38 -> 0.33 | 38.3% | unresolved (kept) |
+| 15 | Silvergate Bank | 2023-03-31 | 6.34 -> 1.50 | 38.1% | run (kept) |
+| 16 | Banco Bilbao Vizcaya, S.A. (New York) | 2011-09-30 | 7.01 -> 1.68 | 37.9% | unresolved (kept) |
+| 17 | Sumitomo Mitsui Trust Bank (U.S.A.) Limited | 2005-09-30 | 1.15 -> 0.30 | 36.4% | unresolved (kept) |
+| 18 | Bank of China (US) | 2022-03-31 | 15.07 -> 4.08 | 35.3% | unresolved (kept) |
+| 19 | Allied Irish Banks (New York) | 2010-12-31 | 1.15 -> 0.32 | 34.5% | unresolved (kept) |
+| 20 | Wells Fargo Bank Southwest, National Association | 2009-09-30 | 6.94 -> 2.02 | 33.7% | missed structure event (excluded) |
+
+Outcome: 1 run, 8 missed structure events (excluded),
+11 unresolved (kept, as the plan requires without evidence).
+
+- **The pattern behind the misses.** Banks move deposits in the quarter *before* the legal date
+  of a merger, closing or charter conversion, so a filter on the same quarter misses them. Seven
+  of the eight misses are of this kind. The eighth, Silverton Bridge Bank, was winding down after
+  a failure in the quarter before.
+- **The unresolved cases.** All but one (TD Bank USA) are trust banks, a credit-card bank and US
+  offices of foreign banks (Bank of China twice, BBVA, Allied Irish Banks during the Irish
+  crisis). These
+  are wholesale-funded institutions whose deposits often move between affiliates without a
+  structure event. Most are probably not retail runs, but the FDIC data cannot show which.
+- **The one confirmed run** is Silvergate Bank in the first quarter of 2023 (m = 38.1%).
+
+**Supplementary figure (not in the plan; added after the hand check, section 9).** Excluding
+also the quarter *before* every structure event changes little: the share of bank-quarters above
+5% is 0.57% instead of
+0.58% (all banks), and 1.30%
+instead of 1.28% (over $10 billion). The misses matter for the
+largest outflows, not for the shares.
+
+**Finding (T6, report only).**
+- **Rare overall, but not negligible.** A month losing more than the 5% stable rate shows up in
+  0.58% of bank-quarters, about one in
+  173. More than the 10% less-stable rate shows up in
+  0.14%.
+- **More frequent for large banks, and in crises.** For banks over $10 billion: above 5% in
+  1.28% of quarters (about one in
+  78), above 10% in 0.39%,
+  rising to 0.64% in stress years.
+- **Two biases pull in opposite directions:**
+  - m is a lower bound, and quarterly data hides runs inside a quarter (Silicon Valley Bank's
+    run never appears). That understates runs.
+  - The unresolved wholesale and affiliate cases probably overstate them.
+- **What it means for the bank.** Single-bank runs beyond the LCR's rates are not one-off events
+  but a recurring, if rare, feature of the US banking system, more so for large banks and in
+  crises. T5 shows what one would do to this bank.
+
 ## 7. Conclusion and recommendations
 
 ### 7.1 Conclusion
@@ -436,7 +533,10 @@ excluding one confirmed break in the data. It was RED before that exclusion (sec
    documented runs of March 2023 were far larger: each failed bank lost 20% or more of its
    deposits in one day and 36% to 60% within days. Any of those multi-day runs would take every
    entity and the group below the 100% minimum (T5, section 6.8, lowest 49.5%). The
-   system data cannot show this risk (limitation 1).
+   system data cannot show this risk (limitation 1). Across every FDIC-insured bank since 2001,
+   such outflows are rare but recurring: a month losing more than 10% shows up in
+   0.39% of quarters for banks over $10 billion
+   (0.64% in stress years; T6, section 6.9).
 
 **In short:** the 5% and 10% rates are not contradicted by 54 years of US system-wide deposit
 data, and the bank's LCR has ample room for the worst system-wide outflow. The evidence says
@@ -447,7 +547,7 @@ nothing reassuring about a run on one bank. That is where the recommendations fo
 | # | Recommendation | Why | Priority |
 |---|---|---|---|
 | R1 | **Resolve the 1985 data point.** *Done 2026-11-17:* confirmed as a break from the Fed's own data and the April 1985 H.8 release; excluded under limitation 7 and re-rated (sections 6.2 and 9). | The overall RED rested on it. | Done |
-| R2 | **Add a single-bank view.** *Case study done 2026-11-17 (T5, section 6.8: the documented March 2023 runs).* Still to do: the distribution of quarterly deposit changes across all FDIC-insured banks, with mergers filtered out. | System totals hide single-bank runs (limitation 1); T5 shows such runs would breach the minimum. | High (half done) |
+| R2 | **Add a single-bank view.** *Done 2026-11-17:* the documented March 2023 runs (T5, section 6.8) and every FDIC-insured bank's quarterly outflows, 2001-2026 (T6, section 6.9). | System totals hide single-bank runs (limitation 1). | Done |
 | R3 | *Done 2026-11-17 (`config/early_warning.yaml`, threshold 20%, docs/reporting.md section 7):* **Set a reverse stress trigger.** Report the break-even run-off rates (19-34%) monthly beside the LCR. Treat a fall in the lowest break-even below a set level (judgement, e.g. 20%) as an early warning for the contingency funding plan. | It turns T3 into ongoing monitoring of how close the bank is to its limits. | Medium |
 | R4 | *Done 2026-11-17 (threshold 3%):* **Use the T4 percentile as an early-warning indicator.** Flag any 4-week retail outflow above about 3% (the system 99th percentile) at an entity. | It is rarer than 1 in 100 for the system, and far below the regulatory rates. | Medium |
 | R5 | **Measure outflows from a robust base in a future version.** For example, use the average of the previous 4 weeks instead of a single week, or report window starts at year- and quarter-ends separately. Do not change this validation's criteria after the fact; apply it at the next validation. | The amber is calendar spikes unwinding (section 6.2); the current measure overstates outflows that start on a spike. | Low |
@@ -546,6 +646,10 @@ Neither change touches a threshold in section 4.
 5. **T6 planned** (2026-11-17, before its data was downloaded; recommendation R2, part 2): the
    plan in section 6.9 fixes the data, the measure, the exclusions, the results to report and
    the hand check. It was committed before any result. Report only, like T5.
+6. **T6 results** (2026-11-17): computed as planned. The plan's hand check excluded 8 of the 20
+   largest outflows as structure events the filter missed. One addition after the results: the
+   supplementary figure that also excludes the quarter before each structure event, because the
+   hand check showed deposits often move then. It is labelled as such and replaces nothing.
 
 Before any result (step 9.2, 2026-11-17, while checking the data source):
 - Section 3: the FRED series IDs, units and start date, as checked on FRED.
