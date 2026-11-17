@@ -797,10 +797,44 @@ class H8Source(_Strict):
         return self
 
 
+class Episode(_Strict):
+    name: str = Field(min_length=1)
+    start: date
+    end: date
+
+    @model_validator(mode="after")
+    def _check(self) -> "Episode":
+        if self.end < self.start:
+            raise ValueError(f"episode {self.name}: end {self.end} is before start {self.start}")
+        return self
+
+
+class BacktestSettings(_Strict):
+    """Run-off backtest settings (tests T1 and T2 of docs/validation_report.md)."""
+
+    h8_weeks: int = Field(gt=0)
+    h8_conservative_weeks: int = Field(gt=0)
+    synthetic_days: int = Field(gt=0)
+    synthetic_conservative_days: int = Field(gt=0)
+    detection_tolerance: float = Field(gt=0, lt=1)
+    normal_config: Path
+    stress_config: Path
+    episodes: list[Episode]
+
+    @model_validator(mode="after")
+    def _check(self) -> "BacktestSettings":
+        if self.h8_conservative_weeks <= self.h8_weeks:
+            raise ValueError("h8_conservative_weeks must be longer than h8_weeks")
+        if self.synthetic_conservative_days <= self.synthetic_days:
+            raise ValueError("synthetic_conservative_days must be longer than synthetic_days")
+        return self
+
+
 class ValidationConfig(_Strict):
     """Model validation settings (config/validation.yaml); criteria: docs/validation_report.md."""
 
     h8: H8Source
+    backtest: BacktestSettings
 
 
 def load_validation_config(path: str | Path) -> ValidationConfig:

@@ -14,3 +14,24 @@ h8:
   provenance_file: data/external/h8_deposits_provenance.json
   user_agent: riskplatform-validation/0.1
   timeout_seconds: 300
+
+# Backtest of the retail run-off rates (tests T1 and T2). The rates themselves are read from
+# config/liquidity/ (basel.yaml and pra.yaml must agree), never typed again here.
+backtest:
+  # H.8 is weekly: 30 days is measured as 4 weeks (28 days), and 5 weeks (35 days) as the
+  # conservative check (docs/validation_report.md, section 2). Ratings use the 4-week figures.
+  h8_weeks: 4
+  h8_conservative_weeks: 5
+  # The synthetic bank is daily (business days): 20 business days = 28 calendar days, and 25 as
+  # the conservative check, matching the H.8 horizons.
+  synthetic_days: 20
+  synthetic_conservative_days: 25
+  # T2: the measured planted run must lie within this distance of the planted size.
+  detection_tolerance: 0.01
+  normal_config: config/generator.yaml
+  stress_config: config/generator_stress.yaml
+  # Named stress episodes: outflows whose 4-week window STARTS in these dates.
+  episodes:
+    - {name: "2008 Lehman Brothers", start: 2008-09-01, end: 2008-12-31}
+    - {name: "2020 COVID-19", start: 2020-03-01, end: 2020-05-31}
+    - {name: "2023 Silicon Valley Bank", start: 2023-03-01, end: 2023-05-31}

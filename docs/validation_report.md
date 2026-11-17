@@ -146,7 +146,89 @@ next to the 5% and 10% assumptions.
 
 ## 6. Results
 
-*To be added in step 9.4 (T1, T2), 9.5 (T3, T4).*
+Step 9.4, 2026-11-17. H.8 data as downloaded on 2026-11-17 (2,810 weeks per series, 1973-01-03
+to 2026-11-04, SHA-256 `f68ce321...`); synthetic banks from `config/generator.yaml` and
+`config/generator_stress.yaml` (60 business days to 2026-10-23). Run-off rates read from
+`config/liquidity/` (both rulebooks: 5% and 10%). T3 and T4 follow in step 9.5.
+
+### 6.1 T1 Backtest (Fed H.8): all commercial banks AMBER, small banks RED
+
+| Series | 4-week windows | Worst 4-week outflow | Worst 5-week (check) | Weeks above 5% | Weeks above 10% | Rating |
+|---|---:|---|---|---:|---:|---|
+| All commercial banks | 2,806 | **6.43%** (from 1975-01-01) | 5.89% (from 2001-09-12) | 6 | 0 | **AMBER** |
+| Small banks | 2,806 | **10.69%** (from 1985-03-27) | 10.82% (from 1985-03-20) | 4 | 2 | **RED** |
+
+Worst 4-week outflow in the named stress episodes (windows starting in the episode):
+
+| Episode | All commercial banks | Small banks |
+|---|---:|---:|
+| 2008 Lehman Brothers (Sep-Dec 2008) | 2.41% | 0.21% |
+| 2020 COVID-19 (Mar-May 2020) | 0.00% | 0.00% |
+| 2023 Silicon Valley Bank (Mar-May 2023) | 1.79% | 3.87% |
+
+In none of the three named crises did system deposits come near the assumed rates; deposits
+rose in 2020. This is limitation 1 at work: in 2023, money left small banks but much of it
+moved to other banks (the all-bank total fell less than the small-bank total).
+
+### 6.2 Limitation 7 check: every spell above 5%
+
+Every run of consecutive weeks above 5% was examined against the levels of both series and the
+Fed's H.8 "Notes on Data" (federalreserve.gov/releases/h8/h8notes.htm, read 2026-11-17).
+
+| Series | Window starts | Worst | What the levels show | Fed notes |
+|---|---|---:|---|---|
+| All banks | 1975-01-01 | 6.43% | Year-end spike: +3.9% in the week to 1 Jan, then back | Not covered (notes start October 1989) |
+| All banks | 1975-12-31 | 5.35% | Year-end spike: +3.3%, then back | Not covered |
+| All banks | 1981-09-30 | 6.13% | Quarter-end spike: +3.4%, then back | Not covered |
+| All banks | 1986-01-01 | 5.35% | Year-end spike: +3.5%, then back | Not covered |
+| All banks | 1986-12-31 | 5.83% | Year-end spike: +4.0%, then back | Not covered |
+| All banks | 2001-09-12 | 5.28% | Day after 11 September 2001: +5.8% in a week (payments held up), then back | None in September 2001. In the window's last week (to 10 October 2001) banks acquired nonbank institutions with $13.2bn of deposits, which raised the end level: without it the outflow would be 5.60% (still amber) |
+| Small banks | 1985-03-06 to 1985-03-27 (4 windows) | 10.69% | One week, 27 March to 3 April 1985: small banks -$30.1bn (-9.6%) while large and foreign-related banks +$69.5bn and the all-bank total +$39.5bn | Not covered |
+
+**Outcome.**
+- *All banks:* each spell starts on a one-week spike (four year-ends, a quarter-end, and
+  11 September 2001) and measures the spike unwinding. These are real balance movements, not
+  breaks, so **they count** under section 4, and the series stays AMBER. No sustained
+  withdrawal is visible.
+- *Small banks:* the March 1985 fall has the signature of a reclassification between the bank
+  panels. Money leaving the banking system does not reappear at other banks in the same week,
+  and here the all-bank total rose. But the Fed's notes, which document structure events only
+  from October 1989, **cannot confirm a break**. The section 5 rule counts an outflow unless
+  the check shows otherwise, so the 1985 outflow **counts**, and the series stays **RED**.
+  (A secondary source, not confirmed on the Fed's site, states that H.8 reported large and
+  small banks separately only from 1988; if so, earlier small-bank levels are reconstructions.)
+
+### 6.3 Supplementary figures (not ratings)
+
+Shown so the reader can see what the RED rests on. They do not replace the ratings above.
+
+| Series | Worst 4-week outflow without the 4 windows crossing 27 March to 3 April 1985 | Worst since October 1989 (period covered by the Fed's notes) |
+|---|---|---|
+| All commercial banks | 6.43% (1975-01-01), 6 weeks above 5% | 5.28% (2001-09-12), 1 week above 5% |
+| Small banks | 4.98% (1986-12-31), none above 5% | 3.87% (2023-03-01), none above 5% |
+
+The small-bank RED rests entirely on one week in 1985.
+
+### 6.4 T2 Detection check: GREEN
+
+| Half | Measured | Criterion | Pass |
+|---|---|---|---|
+| Normal bank, every entity and retail category | Worst 20-business-day outflow 0.24% (BANK_EU stable) | No outflow above 5% | yes |
+| Stressed bank, BANK_UK stable deposits | Planted 9.39% of BANK_UK's stable deposits (10% of the sterling book); measured 9.30% (from 2026-09-08); 25-day check 9.29% | Above 5% and within 1 point of planted (distance 0.09 points) | yes |
+
+The backtest stays quiet when there is no run and finds the planted run to within 0.1
+percentage point. **T1 is therefore conclusive.**
+
+### 6.5 Ratings so far
+
+| Test | Rating |
+|---|---|
+| T1 All commercial banks | AMBER |
+| T1 Small banks | RED |
+| T2 Detection check | GREEN |
+| T3 Sensitivity | step 9.5 |
+| T4 Benchmark | step 9.5 (report only) |
+| **Overall** (worst of T1 and T3, T2 green) | **RED** so far (T3 cannot improve it) |
 
 ## 7. Conclusion and recommendations
 
