@@ -88,3 +88,32 @@ def test_largest_lists_only_kept_big_banks():
                           (2, Q[0], 500_000), (2, Q[1], 100_000)])  # fmt: skip
     top = largest(quarterly_outflows(deposits, NO_EVENTS, 10_000), 20, 1_000_000)
     assert top["cert"].tolist() == [1]  # bank 2 fell more, but is under $1bn
+
+
+def test_quarter_before_also_marks_the_previous_quarter():
+    """Deposits often move the quarter before a merger's legal date: the supplementary filter."""
+    events = _events([("e1", 2, 9, 2, "2023-07-01", 223)])  # one day after Q2
+    planned = {(int(c), q) for c, q in event_quarters(events).itertuples(index=False)}
+    stricter = {(int(c), q) for c, q in event_quarters(events, 1).itertuples(index=False)}
+    assert planned == {(2, Q[2]), (9, Q[2])}
+    assert stricter == planned | {(2, Q[1]), (9, Q[1])}
+    deposits = _deposits([(2, Q[0], 100_000), (2, Q[1], 1_000)])  # gone the quarter before
+    assert quarterly_outflows(deposits, events, 10_000)["excluded"].iloc[1] == ""
+    assert quarterly_outflows(deposits, events, 10_000, quarters_before=1)["excluded"].iloc[
+        1] == "structure_event"  # fmt: skip
+
+
+def test_hand_check_config_is_complete_and_only_misses_are_excluded():
+    from pathlib import Path
+
+    from riskplatform.config import load_validation_config
+
+    cfg = load_validation_config(Path(__file__).resolve().parents[1] / "config" / "validation.yaml")
+    checks = cfg.all_banks.hand_check
+    assert len(checks) == cfg.all_banks.top_n
+    assert len({(h.cert, h.quarter) for h in checks}) == len(checks)  # no duplicates
+    misses = {(h.cert, h.quarter) for h in checks if h.verdict == "missed_structure_event"}
+    assert cfg.all_banks.excluded_by_hand == misses
+    assert all(
+        "FDIC history" in h.evidence for h in checks if h.verdict == "missed_structure_event"
+    )

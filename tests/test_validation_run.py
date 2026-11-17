@@ -129,7 +129,7 @@ def test_the_command_writes_every_result_and_exits_2_unless_green(full_run, tmp_
     out_dir = Path(capsys.readouterr().out.strip())
     assert {p.name for p in out_dir.iterdir()} == {"results.json", "t1_spells.csv",
                                                   "t3_sensitivity.csv",
-                                                  "t5_single_bank_runs.csv"}  # fmt: skip
+                                                  "t5_single_bank_runs.csv", "t6_largest.csv"}  # fmt: skip
     saved = json.loads((out_dir / "results.json").read_text(encoding="utf-8"))
     assert saved["ratings"]["overall"] == "amber"
     assert saved["h8"]["sha256"] == json.loads(
@@ -163,4 +163,35 @@ def test_report_t5_table_equals_the_code(banks):
             f"| {run.bank} | {run.period} | {size} | {_pct(rows['lcr'].min(), 1)} | "
             f"{int(rows['below_limit'].sum())} of {len(rows)} | "
             f"{int(rows['below_minimum'].sum())} of {len(rows)} |"
+        )
+
+
+FDIC_SAVED = (ROOT / VCFG.fdic.deposits_file).exists()
+needs_fdic = pytest.mark.skipif(not FDIC_SAVED, reason="FDIC data not downloaded (not in Git)")
+
+
+@needs_fdic
+def test_report_t6_numbers_and_hand_check_equal_the_code():
+    from riskplatform.model_validation import allbanks
+    from riskplatform.model_validation.fdic import load_fdic
+
+    deposits, events, _ = load_fdic(VCFG.fdic)
+    settings = VCFG.all_banks
+    raw = allbanks.quarterly_outflows(deposits, events, settings.min_previous_thousands)
+    top = allbanks.largest(raw, settings.top_n, settings.top_min_previous_thousands)
+    checked = {(h.cert, h.quarter.isoformat()) for h in settings.hand_check}
+    assert {
+        (c, q.date().isoformat()) for c, q in zip(top["cert"], top["quarter"], strict=True)
+    } == checked  # fmt: skip  (the hand check covers exactly the 20 largest)
+    table = allbanks.quarterly_outflows(
+        deposits, events, settings.min_previous_thousands, settings.excluded_by_hand
+    )
+    stats = allbanks.summarise(table, (0.05, 0.10), settings.stress_years)
+    _in_report(f"**{stats['kept']:,} bank-quarters are")
+    for group, label in (("all banks", "All banks"), ("over $10bn", "Over $10bn")):
+        x = stats[group]["all years"]
+        _in_report(
+            f"| {label} | {x['bank_quarters']:,} | {_pct(x['p50'])} | {_pct(x['p90'])} | "
+            f"{_pct(x['p99'])} | {_pct(x['p99.9'])} | {_pct(x['share_above_stable'])} | "
+            f"{_pct(x['share_above_less_stable'])} |"
         )
