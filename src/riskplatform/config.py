@@ -830,11 +830,25 @@ class BacktestSettings(_Strict):
         return self
 
 
+class SensitivitySettings(_Strict):
+    """LCR sensitivity to the retail run-off rates (T3) and the benchmark percentile (T4)."""
+
+    rate_grid: list[float] = Field(min_length=1)
+    benchmark_percentile: float = Field(gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "SensitivitySettings":
+        if any(not 0 <= rate <= 1 for rate in self.rate_grid):
+            raise ValueError(f"rate_grid values must be between 0 and 1: {self.rate_grid}")
+        return self
+
+
 class ValidationConfig(_Strict):
     """Model validation settings (config/validation.yaml); criteria: docs/validation_report.md."""
 
     h8: H8Source
     backtest: BacktestSettings
+    sensitivity: SensitivitySettings
 
 
 def load_validation_config(path: str | Path) -> ValidationConfig:

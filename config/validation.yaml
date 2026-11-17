@@ -35,3 +35,12 @@ backtest:
     - {name: "2008 Lehman Brothers", start: 2008-09-01, end: 2008-12-31}
     - {name: "2020 COVID-19", start: 2020-03-01, end: 2020-05-31}
     - {name: "2023 Silicon Valley Bank", start: 2023-03-01, end: 2023-05-31}
+
+# Sensitivity (T3) and benchmark (T4). T3's stress rate is the worst T1 outflow (computed, not
+# set here); the internal limit (110%) and the minimum (100%) come from config/limits.yaml and
+# config/liquidity/.
+sensitivity:
+  # Run-off rates (applied to both retail categories) for the LCR table in the report.
+  rate_grid: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+  # T4: percentile of all 4-week H.8 outflows (rises count as 0), report only.
+  benchmark_percentile: 0.99

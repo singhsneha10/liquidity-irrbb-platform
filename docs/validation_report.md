@@ -149,7 +149,7 @@ next to the 5% and 10% assumptions.
 Step 9.4, 2026-11-17. H.8 data as downloaded on 2026-11-17 (2,810 weeks per series, 1973-01-03
 to 2026-11-04, SHA-256 `f68ce321...`); synthetic banks from `config/generator.yaml` and
 `config/generator_stress.yaml` (60 business days to 2026-10-23). Run-off rates read from
-`config/liquidity/` (both rulebooks: 5% and 10%). T3 and T4 follow in step 9.5.
+`config/liquidity/` (both rulebooks: 5% and 10%). T3 and T4: step 9.5, same day.
 
 ### 6.1 T1 Backtest (Fed H.8): all commercial banks AMBER, small banks RED
 
@@ -219,16 +219,64 @@ The small-bank RED rests entirely on one week in 1985.
 The backtest stays quiet when there is no run and finds the planted run to within 0.1
 percentage point. **T1 is therefore conclusive.**
 
-### 6.5 Ratings so far
+### 6.5 T3 Sensitivity: GREEN
+
+On the latest validated day of the default synthetic bank (2026-10-23, quality run
+`20261116T045437Z-45bcda`), with both retail run-off rates replaced by the worst T1 outflow,
+**10.69%**, and the LCR recalculated by the platform's own code (with the rulebooks' own rates
+it reproduces the published LCR exactly, `tests/test_sensitivity.py`).
+
+| Rulebook | Who | LCR now | LCR at 10.69% | Break-even run-off at 110% | at 100% |
+|---|---|---:|---:|---:|---:|
+| Basel | BANK_EU | 171.6% | 147.4% | 19.2% | 22.5% |
+| Basel | BANK_UK | 167.0% | **146.0%** (lowest) | 20.0% | 23.8% |
+| Basel | BANK_US | 237.1% | 198.2% | 29.1% | 33.3% |
+| Basel | Group | 186.6% | 160.2% | 22.4% | 26.1% |
+| UK PRA | BANK_EU | 173.1% | 148.6% | 19.5% | 22.8% |
+| UK PRA | BANK_UK | 168.2% | 147.1% | 20.3% | 24.1% |
+| UK PRA | BANK_US | 238.7% | 199.6% | 29.4% | 33.6% |
+| UK PRA | Group | 188.0% | 161.4% | 22.7% | 26.4% |
+
+Every LCR stays above 110% (lowest 146.0%): **GREEN**. A break-even rate is one run-off rate
+for both retail categories at which the LCR reaches the line.
+
+LCR as the run-off rate rises (both categories, Basel; UK PRA is at most 1.8 points higher):
+
+| Run-off | 5% | 10% | 15% | 20% | 25% | 30% |
+|---|---:|---:|---:|---:|---:|---:|
+| BANK_EU | 190.9% | 151.6% | 125.7% | 107.4% | 93.7% | 83.1% |
+| BANK_UK | 182.6% | 149.6% | 126.8% | 109.97% | 97.1% | 86.9% |
+| BANK_US | 263.5% | 204.4% | 167.0% | 141.1% | 122.2% | 107.8% |
+| Group | 206.0% | 164.7% | 137.2% | 117.6% | 102.8% | 91.4% |
+
+**What T3 does not show (limitation 1).** The stress rate comes from system totals. A run on
+one bank can be far larger: Silicon Valley Bank lost about a quarter of its deposits in a single
+day. At a 25% run-off, BANK_EU and BANK_UK fall below the 100% minimum (93.7% and 97.1%, Basel)
+and the group is at 102.8%. The bank withstands everything the system-wide data shows, but not
+a run of that kind.
+
+### 6.6 T4 Benchmark (report only)
+
+The 99th percentile of all 4-week outflows, 1973-2026 (2,806 windows each; a rise counts as 0):
+
+| Series | 99th percentile | Assumed rates |
+|---|---:|---|
+| All commercial banks | 2.92% | 5% stable, 10% less stable |
+| Small banks | 2.41% | 5% stable, 10% less stable |
+
+A simple statistical alternative would set the run-off well below both regulatory rates: by
+this measure the rates are conservative for system-wide deposits.
+
+### 6.7 Ratings
 
 | Test | Rating |
 |---|---|
 | T1 All commercial banks | AMBER |
 | T1 Small banks | RED |
-| T2 Detection check | GREEN |
-| T3 Sensitivity | step 9.5 |
-| T4 Benchmark | step 9.5 (report only) |
-| **Overall** (worst of T1 and T3, T2 green) | **RED** so far (T3 cannot improve it) |
+| T2 Detection check | GREEN (T1 conclusive) |
+| T3 Sensitivity | GREEN |
+| T4 Benchmark | report only (2.92% and 2.41%) |
+| **Overall** (worst of T1 and T3, as T2 is green) | **RED** |
 
 ## 7. Conclusion and recommendations
 
