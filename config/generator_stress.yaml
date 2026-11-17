@@ -1,0 +1,28 @@
+# Stress mode: the same synthetic bank as generator.yaml, plus ONE planted retail deposit run.
+# A model validation test instrument (Phase 9, test T2 in docs/validation_report.md): it checks
+# that the run-off backtest finds a run when there is one. It is NOT an estimate of a real run.
+# Generate with:
+#   python -m riskplatform.ingestion.generate --config config/generator_stress.yaml
+# Off by default: without this file there is no episode, and every result is unchanged. Days
+# before the start are identical to the normal bank (no extra random numbers are drawn).
+base: generator.yaml
+
+stress:
+  entity: BANK_UK
+  currencies: [GBP]       # a run on sterling deposits (the foreign books are too thin in liquid
+                          # assets to pay a run of this size: generation would refuse it)
+  start: 2026-09-14       # a Monday, business day 31 of the default 60-day series
+  business_days: 15       # three weeks: inside any 28-day (4-week) backtest window from the start
+  outflows:               # share of the balance that leaves over the episode (GBP books only)
+    retail_stable_deposits: 0.10       # twice the 5% LCR run-off rate (LCR40.7; UK Art 24(1))
+    retail_less_stable_deposits: 0.20  # twice the 10% rate (LCR40.13; UK Art 25(1))
+  # The withdrawals are paid as a bank would: central bank reserves first, then government
+  # bonds (sold or repoed), each kept at 1% of its normal balance at least (balances stay > 0).
+  paid_from: [central_bank_reserves, govt_bonds]
+  keep_at_least: 0.01
+  why: >-
+    Judgement: clearly above both assumed run-off rates, so the backtest has a run to find, and
+    spread over three weeks (about 0.7% and 1.5% of the deposits a day). Paying it drains the
+    reserves to their floor, which the quality layer flags as balance jumps (warnings, not a
+    stop) and which takes BANK_UK's LCR from about 186% to about 118%. Real runs can be far
+    larger and faster (Silicon Valley Bank, March 2023).

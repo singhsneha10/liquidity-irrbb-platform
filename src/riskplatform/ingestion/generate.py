@@ -126,6 +126,67 @@ def _curve_rate(
     return low_rate + weight * (high_rate - low_rate)
 
 
+def stress_factors(cfg: GeneratorConfig, book: pd.DataFrame, dates: pd.DatetimeIndex) -> np.ndarray:
+    """Balance multipliers (n_days, n_positions) for the planted deposit run, if any.
+
+    A stressed position keeps the share (1 - outflow) ** (k / n) of its normal balance after k of
+    the episode's n business days (the same fraction leaves each day), and (1 - outflow) from the
+    last day on: the money that left does not come back, and the normal day-to-day steps go on
+    from the lower level. Days before the start, and other positions, get 1. No random draws.
+    """
+    factors = np.ones((len(dates), len(book)))
+    stress = cfg.stress
+    if stress is None:
+        return factors
+    # Business days of the episode passed by each date: 1 on the start date, capped at n.
+    days_in = np.searchsorted(dates, pd.Timestamp(stress.start), side="left")
+    passed = np.clip(np.arange(len(dates)) - days_in + 1, 0, stress.business_days)
+    in_scope = (book["entity"] == stress.entity) & book["currency"].isin(_stress_currencies(cfg))
+    for category, outflow in stress.outflows.items():
+        hit = (in_scope & (book["category"] == category)).to_numpy()
+        kept = (1.0 - outflow) ** (passed / stress.business_days)
+        factors[:, hit] = kept[:, None]
+    return factors
+
+
+def _stress_currencies(cfg: GeneratorConfig) -> list[str]:
+    return cfg.stress.currencies or cfg.currencies
+
+
+def pay_withdrawals(
+    cfg: GeneratorConfig, book: pd.DataFrame, normal: np.ndarray, stressed: np.ndarray
+) -> np.ndarray:
+    """Pay the planted run's withdrawals out of the same entity's and currency's assets.
+
+    For each currency, the money withdrawn by each date (normal - stressed deposit balances) is
+    taken from the `paid_from` categories in order, each down to `keep_at_least` of its normal
+    balance, shared across its positions in proportion to their balances. So the balance sheet
+    still balances and the bank's liquid assets fall, as they would in a real run. Raises
+    ValueError if the paying assets cannot cover a day's withdrawals.
+    """
+    stress = cfg.stress
+    if stress is None:
+        return stressed
+    paid = stressed.copy()
+    for currency in _stress_currencies(cfg):
+        book_rows = ((book["entity"] == stress.entity) & (book["currency"] == currency)).to_numpy()
+        remaining = (normal - stressed)[:, book_rows].sum(axis=1)  # withdrawn so far, per day
+        for category in stress.paid_from:
+            columns = book_rows & (book["category"] == category).to_numpy()
+            held = normal[:, columns].sum(axis=1)
+            take = np.minimum(remaining, held * (1.0 - stress.keep_at_least))
+            share = np.divide(take, held, out=np.zeros_like(take), where=held > 0)
+            paid[:, columns] = normal[:, columns] * (1.0 - share)[:, None]
+            remaining = remaining - take
+        if (remaining > 1e-9).any():
+            day = int(np.argmax(remaining > 1e-9))
+            raise ValueError(
+                f"stress episode too large: {stress.entity} {currency} cannot pay "
+                f"{remaining[day]:,.1f} mn of withdrawals from {stress.paid_from} on day {day}"
+            )
+    return paid
+
+
 def build_positions(
     cfg: GeneratorConfig,
     book: pd.DataFrame,
@@ -145,6 +206,8 @@ def build_positions(
     steps = rng.normal(cfg.daily_balance_drift, cfg.daily_balance_vol, (n_days, n_positions))
     steps[0] = 0.0
     balance = book["start_balance_mn"].to_numpy() * np.cumprod(1.0 + steps, axis=0)
+    stressed = balance * stress_factors(cfg, book, dates)  # all ones without a stress episode
+    balance = pay_withdrawals(cfg, book, balance, stressed)  # unchanged without an episode
 
     # Days to maturity count down by the calendar days elapsed; a matured position is reissued
     # at full tenor.

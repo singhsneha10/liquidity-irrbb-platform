@@ -117,6 +117,37 @@ class FxConfig(_Strict):
         return self
 
 
+class StressEpisode(_Strict):
+    """A planted deposit run (model validation test instrument, not an estimate of a real run).
+
+    From `start` (a business day), each named liability category of `entity`, in `currencies` (all
+    if not given), loses the given share of its balance over `business_days` business days, the
+    same fraction each day; what left does not come back. The withdrawals are paid out of the
+    same entity's and currency's assets in `paid_from` order (e.g. central bank reserves, then
+    government bonds), each drawn down to `keep_at_least` of its normal balance at most; an
+    episode larger than that is refused. No random numbers are drawn, so every day before
+    `start`, and every run without an episode, is identical to the normal bank.
+    """
+
+    entity: str
+    currencies: list[str] | None = None  # None: every currency of the entity
+    start: date
+    business_days: int = Field(gt=0)
+    outflows: dict[str, float] = Field(min_length=1)  # category -> share leaving over the episode
+    paid_from: list[str] = Field(min_length=1)  # asset categories, used in this order
+    keep_at_least: float = Field(gt=0, lt=1)  # a paying asset keeps this share (balances stay > 0)
+    why: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "StressEpisode":
+        if self.start.weekday() >= 5:
+            raise ValueError(f"stress start {self.start} is not a business day (Monday-Friday)")
+        for category, share in self.outflows.items():
+            if not 0 < share < 1:
+                raise ValueError(f"stress outflow for {category} must be between 0 and 1: {share}")
+        return self
+
+
 class GeneratorConfig(_Strict):
     seed: int
     start_date: date
@@ -135,6 +166,7 @@ class GeneratorConfig(_Strict):
     rate_bounds: RateBounds  # data contract: every rate in positions and curves lies within
     rates: RatesConfig
     fx: FxConfig
+    stress: StressEpisode | None = None  # off by default (config/generator_stress.yaml sets one)
 
     @property
     def entity_names(self) -> list[str]:
@@ -182,7 +214,30 @@ class GeneratorConfig(_Strict):
                 f"fx.start_to_reporting must give exactly {sorted(others)}, "
                 f"got {sorted(self.fx.start_to_reporting)}"
             )
+        if self.stress is not None:
+            self._check_stress(self.stress)
         return self
+
+    def _check_stress(self, stress: StressEpisode) -> None:
+        if stress.entity not in self.entity_names:
+            raise ValueError(f"stress entity {stress.entity} is not in {self.entity_names}")
+        for category in stress.outflows:
+            side = self.side_by_category.get(category)
+            if side != "liability":
+                raise ValueError(
+                    f"stress category {category} must be a liability category, got side {side}"
+                )
+        for category in stress.paid_from:
+            side = self.side_by_category.get(category)
+            if side != "asset":
+                raise ValueError(
+                    f"stress paid_from {category} must be an asset category, got side {side}"
+                )
+        unknown = set(stress.currencies or []) - set(self.currencies)
+        if unknown:
+            raise ValueError(f"stress currencies {sorted(unknown)} are not in {self.currencies}")
+        if stress.start < self.start_date:
+            raise ValueError(f"stress start {stress.start} is before start_date {self.start_date}")
 
     def through(self, as_of: date) -> "GeneratorConfig":
         """The same bank, generated up to as_of: n_days becomes the number of business days

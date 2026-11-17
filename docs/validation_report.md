@@ -164,3 +164,12 @@ Before any result (step 9.2, 2026-11-17, while checking the data source):
 - Section 3: the FRED series IDs, units and start date, as checked on FRED.
 - Section 5, limitation 7 (breaks in the H.8 levels), after reading the Fed's H.8 notes. It adds
   a check on any outflow above 5%; it does not change a criterion.
+
+Before any result (step 9.3, 2026-11-17, while building the stress episode):
+- The planted run (`config/generator_stress.yaml`) hits BANK_UK's **sterling** deposits only:
+  10% of retail stable and 20% of retail less-stable deposits over 15 business days from
+  2026-09-14, paid out of central bank reserves and then government bonds (so the balance sheet
+  still balances and the LCR falls, as in a real run). BANK_UK's euro and dollar books hold too
+  few liquid assets to pay a run of that size. T2's "planted size" is therefore the share of
+  BANK_UK's **total** stable deposits (all currencies) that the episode removes, computed from
+  the configured episode in step 9.4; it is a little under 10%. No criterion changes.
