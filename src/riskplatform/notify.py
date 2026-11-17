@@ -27,6 +27,7 @@ from pathlib import Path
 import boto3
 
 from riskplatform.changes import describe_movement
+from riskplatform.early_warning import describe_indicator
 from riskplatform.limits import describe_alert
 
 logger = logging.getLogger(__name__)
@@ -69,32 +70,60 @@ def changes_section(changes: dict) -> list[str]:
     return lines
 
 
-def compose_limit_email(summary: dict, changes: dict | None = None) -> tuple[str, str]:
+def early_warning_section(early_warning: dict) -> list[str]:
+    """The early-warning indicators in alert, as email lines (riskplatform.early_warning)."""
+    alerts = early_warning["alerts"]
+    if not alerts:
+        return ["Early-warning indicators (config/early_warning.yaml): none in alert."]
+    return [
+        "Early-warning indicators in alert (config/early_warning.yaml):",
+        *(f"- {describe_indicator(item)}" for item in alerts),
+    ]
+
+
+def _early_alerts(early_warning: dict | None) -> list[dict]:
+    return early_warning["alerts"] if early_warning else []
+
+
+def compose_limit_email(
+    summary: dict, changes: dict | None = None, early_warning: dict | None = None
+) -> tuple[str, str]:
     """The subject and body of the limit alert email for one run's limits summary, with what
-    changed since the day before if the run's changes summary is given."""
+    changed since the day before and the early-warning indicators, if their summaries are given."""
     alerts = summary["alerts"]
     breaches = sum(alert["status"] == "breach" for alert in alerts)
     warnings = len(alerts) - breaches
+    early = len(_early_alerts(early_warning))
     subject = (
         f"riskplatform limits {summary['as_of']}: "
         f"{_count(breaches, 'breach', 'breaches')}, {_count(warnings, 'warning', 'warnings')}"
     )
+    if early:
+        subject += f", {_count(early, 'early warning', 'early warnings')}"
     thresholds = summary["thresholds"]
     run_id = summary["source_run_id"]
     levels = (
         f"Warning from {thresholds['warning']:.0%} of a limit used; "
         f"breach from {thresholds['breach']:.0%}."
     )
+    if alerts:
+        heading = [f"Internal limits at warning or breach on {summary['as_of']} (run {run_id}):"]
+    else:
+        heading = [
+            f"No internal limit is at warning or breach on {summary['as_of']} (run {run_id})."
+        ]
     lines = [
-        f"Internal limits at warning or breach on {summary['as_of']} (run {run_id}):",
+        *heading,
         "",
         *(f"- {describe_alert(alert)}" for alert in alerts),  # in the stage's order: breaches first
-        "",
+        *([""] if alerts else []),
+        *([*early_warning_section(early_warning), ""] if early_warning else []),
         *([*changes_section(changes), ""] if changes else []),
         levels,
         "These are the bank's own limits (config/limits.yaml), not the regulatory minimums.",
         f"Details: limits/{run_id}/summary.json (in data/ and, in AWS, in the results bucket).",
-        "Sent once per run while any limit is at warning or breach. All positions are synthetic.",
+        "Sent once per run while a limit is at warning or breach or an indicator is in alert.",
+        "All positions are synthetic.",
     ]
     return subject[:SUBJECT_MAX], "\n".join(lines)
 
@@ -108,16 +137,21 @@ def region_of(topic_arn: str) -> str:
 
 
 def send_limit_alerts(
-    summary: dict, topic_arn: str | None, client=None, changes: dict | None = None
+    summary: dict,
+    topic_arn: str | None,
+    client=None,
+    changes: dict | None = None,
+    early_warning: dict | None = None,
 ) -> bool:
-    """Publish one email if the summary has alerts and a topic is set; True if sent."""
-    alerts = summary["alerts"]
+    """Publish one email if a limit or an early-warning indicator is in alert and a topic is set;
+    True if sent."""
+    alerts = summary["alerts"] + _early_alerts(early_warning)
     if not alerts:
         return False
     if not topic_arn:
         logger.info("%d limit alerts not emailed: %s is not set", len(alerts), ALERT_TOPIC_ENV)
         return False
-    subject, body = compose_limit_email(summary, changes)
+    subject, body = compose_limit_email(summary, changes, early_warning)
     client = client or boto3.client("sns", region_name=region_of(topic_arn))
     client.publish(TopicArn=topic_arn, Subject=subject, Message=body)
     logger.info("Emailed %d limit alerts (%s) to %s", len(alerts), subject, topic_arn)
@@ -126,12 +160,15 @@ def send_limit_alerts(
 
 def notify_run(data_dir: str | Path, run_id: str, env: dict[str, str] | None = None) -> bool:
     """Send the limit alert email for one run's limits summary (see send_limit_alerts), with the
-    run's changes summary if it has one."""
+    run's changes and early-warning summaries if it has them."""
     env = dict(os.environ) if env is None else env
     path = Path(data_dir) / "limits" / run_id / "summary.json"
     summary = json.loads(path.read_text(encoding="utf-8"))
-    changes_path = Path(data_dir) / "changes" / run_id / "summary.json"
-    changes = (
-        json.loads(changes_path.read_text(encoding="utf-8")) if changes_path.exists() else None
-    )
-    return send_limit_alerts(summary, env.get(ALERT_TOPIC_ENV), changes=changes)
+    extra = {}
+    for stage in ("changes", "early_warning"):
+        path = Path(data_dir) / stage / run_id / "summary.json"
+        extra[stage] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    return send_limit_alerts(
+        summary, env.get(ALERT_TOPIC_ENV), changes=extra["changes"],
+        early_warning=extra["early_warning"],
+    )  # fmt: skip

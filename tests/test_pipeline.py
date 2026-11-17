@@ -25,6 +25,7 @@ ALL_STAGES = [
     "irrbb",
     "limits",
     "changes",
+    "early_warning",
     "extracts",
     "report",
 ]

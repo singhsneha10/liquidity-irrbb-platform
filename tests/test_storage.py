@@ -110,6 +110,7 @@ def test_published_run_is_uploaded_under_its_id_and_becomes_latest(s3, storage, 
         "irrbb",
         "limits",
         "changes",
+        "early_warning",
         "extracts",
         "reports",
     ):

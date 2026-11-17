@@ -871,3 +871,26 @@ class ValidationConfig(_Strict):
 def load_validation_config(path: str | Path) -> ValidationConfig:
     """Read a YAML file and return a validated ValidationConfig."""
     return ValidationConfig.model_validate(_read_yaml(path))
+
+
+class RetailOutflowIndicator(_Strict):
+    business_days: int = Field(gt=0)
+    threshold: float = Field(gt=0, lt=1)  # alert above
+    why: str = Field(min_length=1)
+
+
+class BreakEvenIndicator(_Strict):
+    threshold: float = Field(gt=0, le=1)  # alert below
+    why: str = Field(min_length=1)
+
+
+class EarlyWarningConfig(_Strict):
+    """Early-warning indicators (config/early_warning.yaml); the bank's judgement."""
+
+    retail_outflow: RetailOutflowIndicator
+    break_even_run_off: BreakEvenIndicator
+
+
+def load_early_warning_config(path: str | Path) -> EarlyWarningConfig:
+    """Read a YAML file and return a validated EarlyWarningConfig."""
+    return EarlyWarningConfig.model_validate(_read_yaml(path))

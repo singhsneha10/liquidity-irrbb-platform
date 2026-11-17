@@ -125,3 +125,12 @@ def test_run_report_and_the_command(run, tmp_path, capsys):
     empty = ["--source", "local", "--data", str(tmp_path / "none"), "--out", str(tmp_path / "x")]
     assert main(empty) == 1
     assert not (tmp_path / "x").exists()
+
+
+def test_every_early_warning_alert_is_in_the_report(board, text):
+    alerts = data.early_warning_alerts(board.con)
+    assert "Early-warning indicators" in text
+    for _, a in alerts.iterrows():
+        detail = report.REGIMES.get(a["regime"], a["regime"]) if a["regime"] else a["category"]
+        assert f"{a['who']} {detail} {a['value']:.2%}" in text
+    assert text.count("ALERT") == len(alerts)

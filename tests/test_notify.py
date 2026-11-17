@@ -12,6 +12,7 @@ import pytest
 from moto import mock_aws
 
 from riskplatform import notify
+from riskplatform.early_warning import describe_indicator
 from riskplatform.limits import describe_alert
 from riskplatform.notify import (
     ALERT_TOPIC_ENV,
@@ -182,9 +183,13 @@ def test_pipeline_emails_once_with_the_runs_alerts(sns, tmp_path, monkeypatch):
     assert summary["alerts"], "precondition: the test bank should have limit alerts"
     (message,) = received()  # exactly one email for the run
     assert code == 2
-    alerts_part, since_part = message["Message"].split("\nSince ", 1)  # then what changed
+    alerts_part, rest = message["Message"].split("\nEarly-warning indicators", 1)
+    early_part, since_part = rest.split("\nSince ", 1)  # then what changed
     sent = [line[2:] for line in alerts_part.splitlines() if line.startswith("- ")]
     assert sent == [describe_alert(alert) for alert in summary["alerts"]]
+    early = json.loads((data / "early_warning" / run_id / "summary.json").read_text("utf-8"))
+    flagged = [line[2:] for line in early_part.splitlines() if line.startswith("- ")]
+    assert flagged == [describe_indicator(item) for item in early["alerts"]]
     changes = json.loads((data / "changes" / run_id / "summary.json").read_text(encoding="utf-8"))
     assert since_part.startswith(f"{changes['previous_date']}:")
     assert len(changes["top_drivers"]) == 10  # config/reporting.yaml
@@ -200,3 +205,47 @@ def test_pipeline_without_a_topic_never_asks_for_an_sns_client(tmp_path, monkeyp
 
     monkeypatch.setattr(notify.boto3, "client", no_aws)
     assert main(_pipeline_args(tmp_path)) in (0, 2)
+
+
+# --- Early-warning indicators -------------------------------------------------------------------
+
+EARLY = {
+    "alerts": [
+        {"indicator": "break_even_run_off", "who": "BANK_EU", "regime": "basel",
+         "category": None, "value": 0.1918, "threshold": 0.20, "status": "alert"},
+    ]
+}  # fmt: skip
+
+
+class _Recorder:
+    def __init__(self):
+        self.sent = []
+
+    def publish(self, **kwargs):
+        self.sent.append(kwargs)
+
+
+def test_an_early_warning_alone_sends_the_email_and_says_no_limit_is_in_alert():
+    client = _Recorder()
+    arn = f"arn:aws:sns:{REGION}:123456789012:alerts"
+    assert send_limit_alerts(_summary([]), arn, client, early_warning=EARLY) is True
+    (message,) = client.sent
+    assert message["Subject"] == (
+        "riskplatform limits 2026-11-13: 0 breaches, 0 warnings, 1 early warning"
+    )
+    assert message["Message"].startswith("No internal limit is at warning or breach")
+    assert (
+        "- ALERT BANK_EU (basel) break-even run-off 19.18% (alert below 20%)" in message["Message"]
+    )
+
+
+def test_no_alert_of_either_kind_sends_nothing():
+    quiet = {"alerts": []}
+    assert send_limit_alerts(_summary([]), "arn:aws:sns:eu-west-2:1:x", _MustNotBeCalled(),
+                             early_warning=quiet) is False  # fmt: skip
+
+
+def test_the_subject_is_unchanged_without_early_warnings():
+    subject, body = compose_limit_email(_summary(ALERTS), early_warning={"alerts": []})
+    assert subject == "riskplatform limits 2026-11-13: 2 breaches, 1 warning"
+    assert "Early-warning indicators (config/early_warning.yaml): none in alert." in body

@@ -271,6 +271,17 @@ data: hand-worked examples written before the code, and proofs against published
     equal the code (T2/T3 everywhere; T1/T4 only where the H.8 file exists, skipped in CI). It
     caught a rounding error in the report (173.1% -> 173.0%) on its first run.
 
+- **Early-warning indicators (R3/R4, 2026-11-17; `riskplatform/early_warning.py`,
+  `config/early_warning.yaml`):** retail outflow over 20 business days (fixed FX, alert above
+  3%, about the T4 99th percentile) and break-even run-off to the 110% LCR limit (alert below
+  20%, under SVB's ~25% one-day loss), per entity and group (break-even per rulebook too). They
+  reuse the backtest's outflow measure and T3's `break_even`. Pipeline stage `early_warning`
+  after `changes` (findings if any alert), S3, query view `early_warning`, Dagster asset
+  `early_warning_indicators` (WARN check), and shown in the email (an indicator alone now
+  sends it; subject adds ", K early warnings"), dashboard Limits tab, PDF section and
+  `early_warning.csv`. Today: break-even alerts for BANK_EU (19.18% / 19.45%) and BANK_UK
+  Basel (19.99%); retail outflow quiet, and alerts at BANK_UK on the planted run (tested).
+
 ## Status
 | Phase | Status |
 |---|---|
@@ -398,8 +409,9 @@ error to Claude); run Terraform from the work PC.
 
 ## Next steps
 1. **Phase 9 follow-ups** (from `docs/validation_report.md`, section 7.2), most important first:
-   R1 DONE 2026-11-17 (1985 break confirmed and excluded; overall AMBER). R2 add bank-level
-   deposit data (single-bank runs).
+   R1 DONE 2026-11-17 (1985 break confirmed and excluded; overall AMBER). R3/R4 DONE
+   2026-11-17 (early-warning indicators). R2 add bank-level deposit data (single-bank runs):
+   needs a data-source decision with the author.
    R3/R4 turn the break-even rates and the ~3% T4 percentile into early-warning indicators.
    Ask the author before starting any of them.
 2. Phase 7 leftovers, **personal PC only**: back up the Terraform state; turn the schedule on when

@@ -6,7 +6,7 @@ Materialise everything once:   dagster asset materialize --select "*" -m riskpla
 Each stage's output is a Dagster **asset**, so the UI shows lineage, run history and metadata:
 
     raw_data -> raw_checks -> validated_data -> liquidity_metrics -> limit_status -> daily_changes
-                                             -> irrbb_results     ->     -> tableau_extracts -> daily_report -> published_run
+                                             -> irrbb_results     ->     -> early_warning_indicators -> tableau_extracts -> daily_report -> published_run
 
 Every asset calls the same function as the pipeline command (riskplatform.pipeline), so there
 is no second copy of any logic. The rules match the pipeline:
@@ -32,6 +32,7 @@ import dagster as dg
 
 from riskplatform.changes import describe_movement, run_changes
 from riskplatform.config import load_storage_config, parse_as_of
+from riskplatform.early_warning import describe_indicator, run_early_warning
 from riskplatform.extracts import run_extracts
 from riskplatform.ingestion.generate import generate, write_outputs
 from riskplatform.irrbb.run import run_irrbb
@@ -58,6 +59,7 @@ class PipelineSettings(dg.ConfigurableResource):
     storage: str = "config/storage.yaml"
     limits: str = "config/limits.yaml"
     reporting: str = "config/reporting.yaml"
+    early_warning: str = "config/early_warning.yaml"
     data: str = "data"
     # Generate business days up to this date (YYYY-MM-DD or 'today'); empty: the config's
     # n_days. The schedule sets it to each run's scheduled date (see daily_schedule).
@@ -74,6 +76,7 @@ class PipelineSettings(dg.ConfigurableResource):
             as_of,
             limits_path=Path(self.limits),
             reporting_path=Path(self.reporting),
+            early_warning_path=Path(self.early_warning),
         )
 
     @property
@@ -246,7 +249,39 @@ def daily_changes(settings: PipelineSettings) -> dg.MaterializeResult:
     )
 
 
-@dg.asset(group_name=GROUP, deps=[daily_changes], kinds={"csv"})
+@dg.asset(
+    group_name=GROUP,
+    deps=[daily_changes],
+    kinds={"python"},
+    check_specs=[dg.AssetCheckSpec("no_early_warning_alert", asset="early_warning_indicators")],
+)
+def early_warning_indicators(settings: PipelineSettings) -> dg.MaterializeResult:
+    """Retail outflow and break-even run-off indicators (config/early_warning.yaml)."""
+    inputs = settings.inputs()
+    run = run_early_warning(
+        settings.data_dir, _published_run_id(settings), inputs.generator, inputs.liquidity,
+        inputs.limits.limits["lcr"].value, inputs.early_warning,
+    )  # fmt: skip
+    return dg.MaterializeResult(
+        metadata={
+            "as_of": run.summary["as_of"],
+            "alerts": dg.MetadataValue.md(
+                "\n".join(f"- {describe_indicator(a)}" for a in run.alerts) or "None."
+            ),
+            "path": dg.MetadataValue.path(str(run.out_dir)),
+        },
+        check_results=[
+            dg.AssetCheckResult(
+                check_name="no_early_warning_alert",
+                passed=not run.alerts,
+                severity=WARN,
+                metadata={"alerts": len(run.alerts)},
+            )
+        ],
+    )
+
+
+@dg.asset(group_name=GROUP, deps=[early_warning_indicators], kinds={"csv"})
 def tableau_extracts(settings: PipelineSettings) -> dg.MaterializeResult:
     """Tableau-ready CSVs of the run, also copied to data/extracts/latest/ (a fixed folder)."""
     run = run_extracts(settings.data_dir, _published_run_id(settings))
@@ -316,6 +351,7 @@ ASSETS = [
     irrbb_results,
     limit_status,
     daily_changes,
+    early_warning_indicators,
     tableau_extracts,
     daily_report,
     published_run,

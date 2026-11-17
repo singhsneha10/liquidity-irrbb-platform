@@ -30,6 +30,9 @@ SLOTS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#625
 GROUP_COLOUR = "#52514e"  # neutral: the group is the total, not another entity
 STATUS = {"ok": "#0ca30c", "warning": "#fab219", "breach": "#d03b3b"}
 STATUS_ICON = {"ok": "✅ ok", "warning": "⚠️ warning", "breach": "⛔ breach"}
+INDICATOR_ICON = {"ok": "✅ ok", "alert": "⚠️ alert", "not_enough_days": "— too few days"}
+INDICATOR_NAMES = {"retail_outflow": "Retail outflow, 4 weeks", "break_even_run_off":
+                   "Break-even run-off (LCR to 110%)"}  # fmt: skip
 REGIMES = {"basel": "Basel", "pra": "UK PRA"}
 LIMIT_NAMES = {"lcr": "LCR", "nsfr": "NSFR", "eve_tier1": "EVE loss / Tier 1"}
 TILE_NAMES = {**LIMIT_NAMES, "eve_tier1": "EVE / Tier 1"}  # short enough for a tile
@@ -284,6 +287,31 @@ def limits_tab(dashboard: data.Dashboard, con, regime: str) -> None:
             "actual": st.column_config.NumberColumn(format="percent"),
             "limit_value": st.column_config.NumberColumn("limit", format="percent"),
             "utilisation": st.column_config.NumberColumn("used", format="percent"),
+        },
+    )
+    early_warning_table(con, regime)
+
+
+def early_warning_table(con, regime: str) -> None:
+    """The early-warning indicators (config/early_warning.yaml), alerts first."""
+    table = data.early_warning(con, regime)
+    st.markdown("**Early-warning indicators**")
+    st.caption(
+        "Alert when 4-week retail outflows exceed their threshold (about the system's 99th "
+        "percentile), or when the run-off that would take the LCR to the 110% limit is below its "
+        "threshold. The bank's own judgement (config/early_warning.yaml)."
+    )
+    shown = table.assign(
+        indicator=table["indicator"].map(INDICATOR_NAMES),
+        status=table["status"].map(INDICATOR_ICON),
+        category=table["category"].fillna(""),
+    )
+    st.dataframe(
+        shown[["indicator", "who", "category", "value", "threshold", "status"]],
+        hide_index=True,
+        column_config={
+            "value": st.column_config.NumberColumn(format="percent"),
+            "threshold": st.column_config.NumberColumn(format="percent"),
         },
     )
 

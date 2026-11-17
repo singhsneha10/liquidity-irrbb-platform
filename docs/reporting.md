@@ -16,6 +16,7 @@ regulatory figure.
 metrics/<run>/  irrbb/<run>/                     (Phases 4 and 5)
         -> limits      data/limits/<run>/        utilisation and status of each limit
         -> changes     data/changes/<run>/       latest business day against the one before
+        -> early warning data/early_warning/<run>/ two indicators that come before a limit
         -> extracts    data/extracts/<run>/      Tableau-ready CSVs (+ data/extracts/latest/)
         -> report      data/reports/<run>/       daily_report.pdf
         -> (s3) publish, latest.json last -> one limit alert email if a limit is at warning or breach
@@ -176,13 +177,40 @@ It's written with ReportLab, which draws the chart too (no matplotlib), in invar
 same run always gives the same bytes. The tests read the PDF's text back with pypdf and compare
 it with the run's numbers.
 
+## 7. Early-warning indicators (`config/early_warning.yaml`, `riskplatform/early_warning.py`)
+
+Two daily indicators that warn before a limit is reached. They come from the model validation
+(`docs/validation_report.md`, recommendations R3 and R4), and their thresholds are the bank's own
+judgement, like the limits.
+
+| Indicator | Measures (latest day; every entity and the group) | Alert when | Why that level |
+|---|---|---|---|
+| Retail outflow | Fall in stable and in less-stable retail deposits over the last 20 business days (about 4 weeks), all currencies at the first day's FX rates | above 3% | About the 99th percentile of 4-week US system-wide outflows since 1973 (2.92%, validation T4); far below the LCR's 5% and 10% |
+| Break-even run-off | The single retail run-off rate (each category at least its rulebook rate) at which the LCR would fall to the 110% internal limit, per rulebook | below 20% | Below the roughly one quarter of its deposits that Silicon Valley Bank lost in one day (March 2023) |
+
+- **Reuse:** both use code that the validation already tested. The outflow measure is the
+  backtest's; the break-even search is T3's. Nothing new is calculated.
+- **Outputs and findings:** the stage writes `data/early_warning/<run>/early_warning.parquet`
+  and `summary.json`, and is uploaded to S3. Any indicator in alert is a finding (exit 2).
+- **Where it shows:** the alert email lists the alerts, and an indicator in alert sends the
+  email on its own. The dashboard's Limits tab has a table, the PDF has a section, and the
+  extracts have `early_warning.csv`.
+- **Too little history:** the retail outflow needs 21 business days of history. With fewer it
+  reports `not_enough_days`, not an alert.
+- **Today:** the break-even indicator alerts for BANK_EU (19.18% Basel, 19.45% UK PRA) and
+  BANK_UK (19.99% Basel). That is the validation's own finding: a run of SVB's size would take
+  them to their limit. The retail outflow is quiet: the normal synthetic bank has no run. On the
+  planted run (`config/generator_stress.yaml`) it alerts at BANK_UK only, as a test checks.
+
 ## Assumptions and simplifications
 
 1. The internal limits are judgement (a made-up risk appetite), not calibrated to a real bank.
 2. There's no NII limit: it would need projected NII, which the platform doesn't calculate.
 3. Limits apply to entities and the group, not per currency.
-4. The limit email repeats every run while a limit stays at warning or breach. There is no
-   "first breach only" mode.
+4. The limit email repeats every run while a limit stays at warning or breach, or an
+   early-warning indicator is in alert. There is no "first breach only" mode.
+10. The early-warning thresholds (3% and 20%) are judgement: the first is anchored on US
+    system-wide data, which understates single-bank runs (validation report, limitation 1).
 5. "Yesterday" is the previous business day in the same run's series, not the previous run's
    stored output. Here they agree, because the series is regenerated identically.
 6. Balance drivers cover on-balance-sheet balances only, split into volume and FX; there's no

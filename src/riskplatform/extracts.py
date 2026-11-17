@@ -14,6 +14,7 @@ command, the dashboard and the alert email show. Files, in data/extracts/<run_id
     limits, limit_changes, balance_drivers
                                     internal limits and what changed since the day before
     quarantine                      rows the quality layer held back
+    early_warning                   the early-warning indicators (retail outflow, break-even)
     liquidity_ratios                LCR and NSFR stacked (metric, value, regulatory_minimum,
                                     internal_limit): the shape a Tableau trend chart wants.
                                     internal_limit is empty per currency: the limits apply to
@@ -66,6 +67,7 @@ VIEWS = {
     "limit_changes": "limit_changes",
     "balance_drivers": "balance_drivers",
     "quarantine": "quarantine",
+    "early_warning": "early_warning",
 }
 LIQUIDITY_RATIOS = """
     WITH ratios AS (

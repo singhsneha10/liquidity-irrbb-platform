@@ -25,6 +25,7 @@ synthetic bank (or real curves) -> raw files + control totals
   -> IRRBB: six standardised shocks, ΔEVE, outlier test, ΔNII, gap (Basel and UK PRA)
   -> internal limits: utilisation, ok / warning / breach
   -> what changed since the day before (limit movements; balance moves split into volume and FX)
+  -> early-warning indicators (4-week retail outflow; run-off that would take the LCR to its limit)
   -> Tableau CSV extracts, daily PDF report
   -> S3 (every run under its id, latest.json last) -> one limit alert email
   -> DuckDB SQL views over the latest good run -> Streamlit dashboard

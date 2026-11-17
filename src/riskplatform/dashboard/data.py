@@ -219,3 +219,29 @@ def thresholds(dashboard: Dashboard) -> dict[str, float]:
     """The warning and breach levels of utilisation (config/limits.yaml, via the run)."""
     path = dashboard.results_dir / "limits" / dashboard.run_id / "summary.json"
     return json.loads(path.read_text(encoding="utf-8"))["thresholds"]
+
+
+def early_warning(con: duckdb.DuckDBPyConnection, regime: str) -> pd.DataFrame:
+    """The early-warning indicators on the latest date: retail outflows (no rulebook) and the
+    break-even run-off for this rulebook (config/early_warning.yaml)."""
+    return _df(
+        con,
+        """
+        SELECT indicator, who, category, regime, value, threshold, status
+        FROM early_warning WHERE regime IS NULL OR regime = ?
+        ORDER BY status = 'alert' DESC, indicator, level DESC, who, category
+        """,
+        regime,
+    )
+
+
+def early_warning_alerts(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    """Every early-warning indicator in alert on the latest date, under both rulebooks."""
+    return _df(
+        con,
+        """
+        SELECT indicator, who, category, regime, value, threshold
+        FROM early_warning WHERE status = 'alert'
+        ORDER BY indicator, value, who, regime
+        """,
+    )
