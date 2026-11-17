@@ -343,12 +343,46 @@ device without them would try to create everything again. Keep developing on eit
   ECR can scan the image (`0.1.0` has no scan result); saved plans (`tfplan`) are now ignored by
   Git and Docker.
 
-**Still to do on the personal PC only (F):**
-- Back up `infra/terraform/billing/terraform.tfstate` and `infra/terraform/platform/terraform.tfstate`
-  somewhere private (author; not Git, not public storage).
-- Turn the schedule on when wanted (`schedule_enabled = true` in `platform/terraform.tfvars`,
-  plan, approve, apply): about 7-9 INR/month, one limit email per weekday while BANK_UK breaches.
-- Any future AWS change (new image tag, Terraform edit) also happens on the personal PC.
+**Next session on the personal PC: release 0.2.0, back up the state, schedule on (written
+2026-11-17).** AWS still runs image `0.1.0` (Phases 7-8.2 only): no changes, early-warning,
+extracts, PDF or dashboard data. About 30-60 minutes, mostly Docker build and push. Working rule 9
+applies: Claude may run the commands, but shows each plan in plain words and waits for "yes"
+before anything that creates, changes or costs (push, apply, run-task, schedule).
+
+G1. **Code and checks.** `git pull` (branch `sneha`), `pip install -e ".[dev,orchestration,dashboard]"`,
+    then `pytest; ruff check .; ruff format --check .` (682 tests; 2 report tests skip without the
+    H.8 file). Stop if anything fails.
+G2. **Back up the Terraform state first** (before any apply): copy
+    `infra/terraform/billing/terraform.tfstate` and `infra/terraform/platform/terraform.tfstate`
+    (and their `.backup` files if present) somewhere private, not Git and not a public drive.
+G3. **Sign in:** `$env:AWS_PROFILE = "riskplatform"`; `aws sso login --profile riskplatform`;
+    `aws sts get-caller-identity`.
+G4. **Build and push `0.2.0`** (`infra/README.md` section 3, with the Windows login workaround
+    there and `--provenance=false`, so ECR scans it), tag `0.2.0` instead of `0.1.0`. Tags are
+    immutable: if a push half-fails, use `0.2.1`, never re-push `0.2.0`. ECR keeps the last 10.
+G5. **Point the task at it:** `image_tag = "0.2.0"` in `infra/terraform/platform/terraform.tfvars`
+    (the real file; the example already says 0.2.0), then `terraform plan` and **read it with
+    Claude before applying**. Expected: the ECS task definition is replaced (a new revision; the
+    old one is deregistered), and the schedule, the only resource that names the revision
+    (`schedule.tf`), is updated in place. The scheduler's permission uses the ARN without the
+    revision, so IAM does not change. No bucket, role, topic or budget is touched. Then
+    `terraform apply`.
+G6. **One manual run** (`infra/README.md` section 4) and `aws logs tail /riskplatform/pipeline
+    --follow`. Expected: every stage including `early_warning`, then `Pipeline FINDINGS (exit
+    code 2)`. One email arrives with the subject ending in ", N early warnings" and an
+    "Early-warning indicators in alert" section (BANK_EU and BANK_UK break-even alerts). In S3,
+    `early_warning/<run>/` and `reports/<run>/daily_report.pdf` appear; `latest.json` points at
+    the run. Check from the laptop: `riskplatform-report --source s3` and
+    `python -m riskplatform.query --source s3 --tables` (the `early_warning` view is listed).
+G7. **Schedule on:** `schedule_enabled = true` in the same `terraform.tfvars`, `terraform plan`
+    (expected: only the schedule changes, from DISABLED to ENABLED), then `terraform apply`.
+    It runs weekdays at 06:00 London. Cost: about 0.08 USD (7-9 INR with GST) a month. Expect one
+    limit email every weekday while BANK_UK breaches its EVE limit and the break-even
+    indicators alert.
+G8. **Next weekday:** check the 06:00 run (`aws logs tail /riskplatform/pipeline --since 2h`),
+    and that the email arrived. Back up the state files again after any apply.
+
+Any future AWS change (new image tag, Terraform edit) also happens on the personal PC only.
 
 **A. Get the code and prove it is green (nothing changes in the code tonight)**
 1. Commit and push this file from the work PC first (the 8.8 docs are already committed).

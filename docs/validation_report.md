@@ -342,6 +342,71 @@ the group, under both rulebooks, falls below the 100% minimum (lowest 49.5%). Th
 run concentrated on one bank with concentrated, largely uninsured deposits. The FDIC study finds
 that roughly two-thirds or more of each bank's top depositors ran.
 
+### 6.9 T6 Single-bank outflows across all US banks: PLAN (written before the data)
+
+**Status: plan only.** Written on 2026-11-17, before any quarterly deposit figure of the
+~4,500 banks was downloaded or examined (recommendation R2, part 2). Results will follow this
+plan; any change after they are seen is logged in section 9. Already seen at the time of
+writing: the quarterly deposits of Silicon Valley Bank, Signature Bank and First Republic
+(section 6.8), and the counts and codes of the FDIC structure events below. Like T5, T6 is
+**report only**: it was added after the main results and cannot change the overall rating.
+
+**Question.** How often does a single US bank lose deposits faster than the LCR's run-off rates
+assume, across all banks and all years, in normal times and in crises? T5 shows what three
+famous runs were. T6 asks how common runs of that kind are.
+
+**Data.** FDIC BankFind API (free, no key), quarterly Call Report figures for every
+FDIC-insured institution (banks and savings institutions):
+- total deposits (`DEP`) by certificate number (`CERT`) and quarter end (`REPDTE`), from the
+  first quarter of 2001 to the latest available (about 710,000 bank-quarters);
+- structure events (`/history`) with their change codes and effective dates.
+
+Each file is saved locally with provenance and a SHA-256 hash, like the H.8 data, and is not
+committed.
+
+**Measure.**
+- **Quarterly outflow** of bank *b* in quarter *t*: `q = max(0, 1 - DEP(b,t) / DEP(b,t-1))`, for
+  consecutive quarters only.
+- **Implied monthly outflow**, a lower bound on the worst month in that quarter:
+  `m = 1 - (1 - q)^(1/3)`. If deposits fall by `q` over three months, at least one month fell by
+  `m` or more. `m` is what is compared with the 30-day run-off rates of 5% and 10%. It
+  understates runs that happen inside a quarter (Silicon Valley Bank's run never appears in its
+  quarterly reports), so T6 shows how often outflows are at least this large.
+
+**Exclusions, fixed now** (a bank-quarter is left out if any applies):
+1. **A deposit-moving structure event** for the bank, with an effective date after the previous
+   quarter end and on or before this one, on either side of the event:
+   - failure, merger, absorption, consolidation, partial purchase and assumption, or closing
+     (codes 211, 213, 215, 216, 217, 221, 222, 223, 224, 225, 230, 235, 240, 260);
+   - the bank as acquirer (810, 811, 812, 820, 830);
+   - branches bought, acquired or sold (712, 713, 722, 724).
+
+   Other events (names, locations, regulators, branch openings and closings) do not move
+   deposits and are kept.
+2. **Previous-quarter deposits below $10 million.** Too small for a percentage to mean much.
+3. **A gap**: the previous quarter is missing, so the change is not over one quarter.
+
+**Results to report, all fixed now.** By size (previous-quarter deposits under $1bn, $1bn to
+$10bn, over $10bn) and for all banks together:
+- the number of bank-quarters;
+- the median, 90th, 99th and 99.9th percentiles of `m`;
+- the share of bank-quarters with `m` above 5% and above 10%;
+- the same shares in the stress years 2008-2009, 2020 and 2023, and in all other years.
+
+**The largest outflows, checked by hand.** The 20 largest `m` among banks over $1bn are listed
+by name and checked against the FDIC history and public sources for anything the exclusions
+missed. Examples: a branch sale recorded under another code, a bank moving deposits to an
+affiliate, a data error. Each is reported as a run, as a missed structure event (and
+excluded), or as unresolved (and kept), with the reason.
+
+**Stated in advance about interpretation.**
+- A share above 5% or 10% is a frequency of large outflows. It is not evidence that the rates
+  are wrong for system-wide stress, which T1 tested.
+- `DEP` is all deposits, not retail only, and includes brokered and wholesale deposits.
+- Quarter-end figures can be window-dressed.
+- The merger filter may miss transfers. The hand check of the largest outflows is there for
+  this.
+
 ## 7. Conclusion and recommendations
 
 ### 7.1 Conclusion
@@ -478,6 +543,9 @@ Neither change touches a threshold in section 4.
    a single day" became the Federal Reserve's own figure, "over $40 billion ... on March 9" (its
    review of 28 April 2023). The quarter was an approximation not found in either source. The
    limitation's meaning is unchanged.
+5. **T6 planned** (2026-11-17, before its data was downloaded; recommendation R2, part 2): the
+   plan in section 6.9 fixes the data, the measure, the exclusions, the results to report and
+   the hand check. It was committed before any result. Report only, like T5.
 
 Before any result (step 9.2, 2026-11-17, while checking the data source):
 - Section 3: the FRED series IDs, units and start date, as checked on FRED.

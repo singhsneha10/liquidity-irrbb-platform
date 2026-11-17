@@ -17,7 +17,7 @@ variable "alert_email" {
 variable "image_tag" {
   description = "Tag of the pipeline image in ECR. Tags are immutable, so use a new one per release."
   type        = string
-  default     = "0.1.0"
+  default     = "0.2.0"
 }
 
 variable "s3_prefix" {
