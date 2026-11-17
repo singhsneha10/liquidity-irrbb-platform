@@ -221,8 +221,9 @@ percentage point. **T1 is therefore conclusive.**
 
 ### 6.5 T3 Sensitivity: GREEN
 
-On the latest validated day of the default synthetic bank (2026-10-23, quality run
-`20261116T045437Z-45bcda`), with both retail run-off rates replaced by the worst T1 outflow,
+On the latest validated day of the default synthetic bank (2026-10-23; `riskplatform-validate`
+generates it and runs the quality layer on it afresh, so the same configs give the same numbers),
+with both retail run-off rates replaced by the worst T1 outflow,
 **10.69%**, and the LCR recalculated by the platform's own code (with the rulebooks' own rates
 it reproduces the published LCR exactly, `tests/test_sensitivity.py`).
 
@@ -232,7 +233,7 @@ it reproduces the published LCR exactly, `tests/test_sensitivity.py`).
 | Basel | BANK_UK | 167.0% | **146.0%** (lowest) | 20.0% | 23.8% |
 | Basel | BANK_US | 237.1% | 198.2% | 29.1% | 33.3% |
 | Basel | Group | 186.6% | 160.2% | 22.4% | 26.1% |
-| UK PRA | BANK_EU | 173.1% | 148.6% | 19.5% | 22.8% |
+| UK PRA | BANK_EU | 173.0% | 148.6% | 19.5% | 22.8% |
 | UK PRA | BANK_UK | 168.2% | 147.1% | 20.3% | 24.1% |
 | UK PRA | BANK_US | 238.7% | 199.6% | 29.4% | 33.6% |
 | UK PRA | Group | 188.0% | 161.4% | 22.7% | 26.4% |
@@ -284,7 +285,25 @@ this measure the rates are conservative for system-wide deposits.
 
 ## 8. Reproducing this validation
 
-*Commands added in step 9.6; every number above will come from `data/validation/`.*
+```
+python -m riskplatform.model_validation.h8     # once: saves the H.8 deposits (needs the internet)
+riskplatform-validate                          # T1-T4: python -m riskplatform.model_validation.run
+```
+
+`riskplatform-validate` writes `data/validation/<UTC time>/`:
+- `results.json`: every number in section 6, the ratings, the H.8 file's SHA-256 and the
+  quality run id of the synthetic bank;
+- `t1_spells.csv`: every run of weeks above 5%, for the section 6.2 check;
+- `t3_sensitivity.csv`: the section 6.5 tables at full precision.
+
+Exit code 0 if every rating is green, 2 if any is amber, red or inconclusive (as now), 1 on an
+error such as a missing or changed H.8 file. A newer H.8 download adds weeks and can change T1
+and T4; the hash in `results.json` says which download a set of results used.
+
+`tests/test_validation_run.py` checks that the headline numbers in this report equal what the
+code computes. The T2 and T3 checks run everywhere, including CI. The T1 and T4 checks need the
+H.8 file, which is not in Git, so they run where it has been downloaded and are skipped
+elsewhere.
 
 ## 9. Changes to sections 1-5
 
