@@ -66,6 +66,14 @@ synthetic bank (or real curves) -> raw files + control totals
 - **Group:** pay-fixed swaps bring the group from 22.0% of Tier 1 (unhedged) to about 14%. That
   is below the 15% test, but close enough to be at warning.
 
+**Model validation** of the LCR's retail deposit run-off rates (5% and 10%), against 54 years of
+Federal Reserve H.8 deposit data and a planted deposit run. The pass/fail criteria were written
+before any result. The overall rating is **RED**, resting on one unconfirmed 1985 data point.
+In 2008, 2020 and 2023, system-wide deposits fell by at most 3.9% in 4 weeks, well within the
+rates. But a run the size of Silicon Valley Bank's would take two entities below the LCR
+minimum. Details and
+recommendations: [validation report](docs/validation_report.md).
+
 [Daily report, page 1](docs/images/daily_report_page1.png)
 
 ## Quickstart
@@ -115,6 +123,7 @@ pytest; ruff check .; ruff format --check .
 | [Data quality](docs/data_quality.md) | Quarantine, reconciliation, STOP / WARNING checks, breaks report |
 | [Data dictionary](docs/data_dictionary.md) | Every input field, allowed values, licences |
 | [Limits, alerts and reporting](docs/reporting.md) | Internal limits, email, daily changes, dashboard, extracts, PDF |
+| [Model validation report](docs/validation_report.md) | Backtest of the LCR retail run-off rates: criteria set first, Fed H.8 data, stress episode, sensitivity, recommendations |
 | [Deploying to AWS](infra/README.md) | Terraform, billing alarm first, schedule, alerts, cost |
 
 ## Engineering
@@ -124,8 +133,9 @@ pytest; ruff check .; ruff format --check .
   - DuckDB over Parquet;
   - Dagster, Streamlit, ReportLab;
   - boto3, Docker and Terraform (AWS provider 6).
-- **Tests:** about 600 pytest tests, including whole-pipeline runs, a fake AWS (moto), the
-  dashboard run headless, and PDF text read back.
+- **Tests:** over 650 pytest tests, including whole-pipeline runs, a fake AWS (moto), the
+  dashboard run headless, PDF text read back, and checks that the validation report's numbers
+  equal what the code computes.
 - **CI (GitHub Actions):** lint, format and tests; builds the Docker image and runs the pipeline
   in it; checks Terraform formatting and validates the code.
 - **Security:**
@@ -148,7 +158,8 @@ src/riskplatform/
   dashboard/ extracts.py report.py   Streamlit, Tableau CSVs, daily PDF
   pipeline.py           the whole run in one command; orchestration/ for Dagster
   storage.py            publishing to S3
+  model_validation/     run-off backtest on Fed H.8 data, sensitivity, riskplatform-validate
 infra/terraform/        AWS: billing alarm, then the platform
-docs/                   methodology, worked examples, data quality, reporting
+docs/                   methodology, worked examples, data quality, reporting, validation
 tests/                  pytest
 ```
