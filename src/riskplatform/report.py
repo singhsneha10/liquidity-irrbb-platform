@@ -286,7 +286,7 @@ def irrbb_section(con) -> list:
     _status_cells(table, rows, column=5)
     note = Paragraph(
         "Outlier test: the worst EVE loss over the six standardised shocks against 15% of "
-        "Tier 1 (Basel SRP31.82-31.83; UK ICAA 9.4A). NII: the change in net interest income over the next "
+        "Tier 1 (Basel SRP31.82-31.83; UK ICAA 9.4A, SS31/15 2.7B). NII: the change in net interest income over the next "
         "12 months under the parallel shocks, constant balance sheet.",
         STYLES["small"],
     )

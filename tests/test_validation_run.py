@@ -24,9 +24,9 @@ REPORT = (ROOT / "docs" / "validation_report.md").read_text(encoding="utf-8")
 VCFG = load_validation_config(CONFIG / "validation.yaml")
 H8_SAVED = (ROOT / VCFG.h8.output_file).exists()
 needs_h8 = pytest.mark.skipif(not H8_SAVED, reason="H.8 file not downloaded (not in Git)")
-# The worst T1 outflow at full precision (results.json; 10.69% in the report). The H.8 test
-# below checks it still equals what the code computes, so it cannot go stale unnoticed.
-REPORTED_STRESS_RATE = 0.10693192958594655
+# The worst T1 outflow at full precision (results.json; 6.43% in the report, after the 1985
+# break was excluded). The H.8 test below checks it still equals what the code computes.
+REPORTED_STRESS_RATE = 0.06426785419759196
 
 
 def _pct(value: float, places: int = 2) -> str:
@@ -101,29 +101,36 @@ def test_report_t1_t4_numbers_and_ratings_equal_the_code(full_run):
     for name, label in (("all_commercial_banks", "All commercial banks"),
                         ("small_banks", "Small banks")):  # fmt: skip
         main = results["t1"][name]["main"]
-        _in_report(f"| {label} | 2,806 | **{_pct(main['worst'])}** (from {main['worst_date']})")
+        windows = results["t1"][name]["windows"]
+        _in_report(
+            f"| {label} | {windows:,} | **{_pct(main['worst'])}** (from {main['worst_date']})"
+        )
         _in_report(f"| {label} | {_pct(results['t4']['values'][name])} |")
     assert results["t3"]["stress_rate"] == pytest.approx(REPORTED_STRESS_RATE, rel=1e-12)
     assert results["ratings"] == {
         "t1_all_commercial_banks": "amber",
-        "t1_small_banks": "red",
+        "t1_small_banks": "green",
+        "t1_all_commercial_banks_before_breaks": "amber",
+        "t1_small_banks_before_breaks": "red",  # kept: the rating before the 1985 break
         "t2": "green",
         "t3": "green",
-        "overall": "red",
+        "overall": "amber",
     }
-    _in_report("| **Overall** (worst of T1 and T3, as T2 is green) | **RED** |")
+    raw = results["t1"]["small_banks"]["raw"]
+    _in_report(f"{_pct(raw['worst'])} (from {raw['worst_date']}), {raw['above_stable']} above 5%")
+    _in_report("| **Overall** (worst of T1 and T3, as T2 is green) | **AMBER** | RED |")
 
 
 @needs_h8
-def test_the_command_writes_every_result_and_exits_2_on_a_red(full_run, tmp_path, monkeypatch,
+def test_the_command_writes_every_result_and_exits_2_unless_green(full_run, tmp_path, monkeypatch,
                                                               capsys):  # fmt: skip
     monkeypatch.setattr(validate, "run_validation", lambda *args, **kwargs: full_run)
-    assert validate.main(["--out", str(tmp_path)]) == 2
+    assert validate.main(["--out", str(tmp_path)]) == 2  # overall amber: needs attention
     out_dir = Path(capsys.readouterr().out.strip())
     assert {p.name for p in out_dir.iterdir()} == {"results.json", "t1_spells.csv",
                                                   "t3_sensitivity.csv"}  # fmt: skip
     saved = json.loads((out_dir / "results.json").read_text(encoding="utf-8"))
-    assert saved["ratings"]["overall"] == "red"
+    assert saved["ratings"]["overall"] == "amber"
     assert saved["h8"]["sha256"] == json.loads(
         (ROOT / VCFG.h8.provenance_file).read_text(encoding="utf-8"))["sha256"]  # fmt: skip
 

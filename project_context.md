@@ -4,7 +4,8 @@
 **Goal:** A production-quality, end-to-end, deployed portfolio project that impresses senior
 people at banks such as JPMorgan (Risk Analyst roles). Business use comes later.
 **Last updated:** 2026-11-17 (work PC). **Phase 9 (model validation) is done** (9.1-9.8):
-`docs/validation_report.md`, overall rating **RED** (see "Design decisions", Phase 9). Phase 7 is
+`docs/validation_report.md`, overall rating **AMBER** after R1 (was RED; see "Design
+decisions", Phase 9). Phase 7 is
 deployed to AWS (2026-11-16); only checklist F is left (back up the Terraform state, schedule on
 when wanted; personal PC only). 661 tests. Next: the open items in "Next steps", then Phase 10.
 9.1-9.7 were committed by the author step by step; this file and the README line (9.8) were
@@ -252,6 +253,15 @@ data: hand-worked examples written before the code, and proofs against published
     found 9.30%); T3 GREEN (lowest stressed LCR 146.0%; break-even 19.2-29.4% at 110%,
     22.5-33.6% at 100%; an SVB-size 25% run takes BANK_EU and BANK_UK below 100%); T4 2.92% and
     2.41%. **Overall RED.** Recommendations R1-R7 in the report (resolve 1985 first).
+  - **Re-rated 2026-11-17 (R1, after the results; author's decision, logged in the report's
+    section 9):** the 1985 fall is a confirmed break: FRED's large-bank deposits
+    (`DPSLCBW027NBOG`) start on 1985-04-03, and the H.8 release of 5 April 1985 (FRASER) split
+    banks by assets under/over $1.4bn ($902.7bn under $1.4bn vs FRED's reconstructed $316.4bn).
+    Excluded via `confirmed_breaks` in `config/validation.yaml` (results keep the
+    `..._before_breaks` ratings). Small banks GREEN (worst 4.98%); T3 stress 6.43%. That exposed
+    a flaw: setting both rates to 6.43% LOWERED the 10% less-stable rate and raised the
+    "stressed" LCR; fixed so a stress never lowers a rulebook rate (lowest LCR 161.6%, GREEN).
+    T4 small banks 2.18%. **Overall AMBER** (only the all-bank calendar spikes; R5).
   - Frameworks, checked against the official texts 2026-11-17: **SR 11-7 is superseded by
     SR 26-2 (Fed/OCC/FDIC, 17 April 2026)**; SR 26-2's "model" excludes deterministic rule-based
     processes. **PRA SS1/23** current version April 2026 (effective 23 April 2026) applies to
@@ -273,7 +283,7 @@ data: hand-worked examples written before the code, and proofs against published
 | 6. Testing and hardening | Done: one-command pipeline with exit codes (6.1), shared logging + run log files (6.2), edge cases: missing curve now a STOP, missing book a WARNING, LCR 0/0, empty folders (6.3), limits moved to config (6.4), metrics/IRRBB about 6x faster, slow tests shortened (6.5), 98% branch coverage and 16/16 planted formula bugs caught (6.6). 423 tests, about 1 minute. |
 | 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). **Deployed 2026-11-16** from the personal PC: billing alarm, platform (27 resources), image `0.1.0`, one manual Fargate run (1 min 36 s, exit 2, 191 files to S3, limit email received). Daily schedule still **off**. |
 | 8. Alerts and dashboard | Done: limits config + utilisation (8.1), limits stage + S3 + query view + Dagster asset (8.2), SNS limit alert email (8.3), what changed since yesterday (8.4), Streamlit dashboard (8.5), Tableau CSV extracts (8.6), daily PDF report (8.7), README + `docs/reporting.md` + this file (8.8). 597 tests, 2 to 6 minutes (varies from run to run; not yet profiled). |
-| 9. Model validation | Done: scope and criteria before results (9.1), Fed H.8 deposits from FRED (9.2), planted deposit-run stress episode (9.3), backtest T1 + detection check T2 (9.4), LCR sensitivity T3 + benchmark T4 (9.5), `riskplatform-validate` and report consistency tests (9.6), conclusion, recommendations and SS1/23 / SR 26-2 framing (9.7), this file (9.8). Overall rating RED (one unconfirmed 1985 data point). 661 tests. |
+| 9. Model validation | Done: scope and criteria before results (9.1), Fed H.8 deposits from FRED (9.2), planted deposit-run stress episode (9.3), backtest T1 + detection check T2 (9.4), LCR sensitivity T3 + benchmark T4 (9.5), `riskplatform-validate` and report consistency tests (9.6), conclusion, recommendations and SS1/23 / SR 26-2 framing (9.7), this file (9.8). R1 done: the 1985 break confirmed and excluded, overall AMBER (was RED). |
 | 10. Public deploy | Not started |
 
 ## Deployment checklist (personal PC; decided 2026-11-16)
@@ -388,18 +398,23 @@ error to Claude); run Terraform from the work PC.
 
 ## Next steps
 1. **Phase 9 follow-ups** (from `docs/validation_report.md`, section 7.2), most important first:
-   R1 resolve the 1985 small-bank data point from the historical H.8 releases (FRASER) or the
-   Fed's break-adjusted series; if a panel shift is confirmed, record it under limitation 7
-   and re-rate (the overall RED rests on it). R2 add bank-level deposit data (single-bank runs).
+   R1 DONE 2026-11-17 (1985 break confirmed and excluded; overall AMBER). R2 add bank-level
+   deposit data (single-bank runs).
    R3/R4 turn the break-even rates and the ~3% T4 percentile into early-warning indicators.
    Ask the author before starting any of them.
 2. Phase 7 leftovers, **personal PC only**: back up the Terraform state; turn the schedule on when
    wanted (see "Deployment checklist", F). Decided before (done): failure alerts for exit codes
    except 0 and 2; limit alert email for findings; each run up to its own date (`--as-of today`).
-3. Open question: `config/limits.yaml` cites "UK SS31/15" for the 15% outlier test, while
-   `docs/irrbb_methodology.md`, `docs/reporting.md` and the PDF cite UK ICAA 9.4A. Check the
-   official text and make them agree.
-4. Profile the test suite (it varies from 2 to 6 minutes): `pytest --durations=20`.
+3. Resolved 2026-11-17: the UK 15% outlier test is ICAA 9.4A (the binding rule: calculate,
+   and notify the PRA "immediately" if EVE would decline by MORE than 15% of Tier 1), restated
+   in SS31/15 2.7B (current version October 2025, effective 1 July 2026), which adds "outlier
+   firm" status and a PRA review. Both were right, just incomplete; every file now cites
+   "ICAA 9.4A, SS31/15 2.7B". A new SS31/15 takes effect 1 January 2027: not yet reviewed.
+4. Done 2026-11-17, test suite profiled (`pytest --durations=30`): no slow test (slowest 6.4 s,
+   the top 30 about 1 minute of a 2-minute run). Running in parallel (pytest-xdist 3.8.0, 12
+   cores) took 99 s and then 201 s against 104-123 s serially: the time is disk I/O on this PC
+   (many small Parquet writes, likely antivirus scanning), not CPU, so xdist was NOT added.
+   The 2-6 minute spread is the machine; nothing to fix in the tests.
 5. **Phase 10: public deploy of the dashboard** (not yet planned; decide hosting and cost with
    the author first).
 6. Walk through the code in plain words (see "Walkthrough debt").

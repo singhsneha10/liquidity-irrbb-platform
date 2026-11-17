@@ -43,7 +43,7 @@ for its own run.
 |---|---|---|---|
 | LCR | floor | >= 110% | 10 points of management buffer above the 100% minimum |
 | NSFR | floor | >= 105% | 5 points of buffer above the 100% minimum |
-| EVE loss / Tier 1 | cap | <= 15% | Equal to the supervisory outlier test (Basel SRP31.82; UK ICAA 9.4A) |
+| EVE loss / Tier 1 | cap | <= 15% | Equal to the supervisory outlier test (Basel SRP31.82; UK ICAA 9.4A, SS31/15 2.7B) |
 
 - **Utilisation** is the share of a limit used: limit / actual for a floor, actual / limit for a
   cap.

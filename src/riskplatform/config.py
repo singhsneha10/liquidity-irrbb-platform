@@ -809,6 +809,22 @@ class Episode(_Strict):
         return self
 
 
+class SeriesBreak(_Strict):
+    """A confirmed break in a series' levels: windows spanning last_before -> first_after are not
+    outflows (docs/validation_report.md, limitation 7)."""
+
+    series: str = Field(min_length=1)
+    last_before: date
+    first_after: date
+    evidence: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "SeriesBreak":
+        if self.first_after <= self.last_before:
+            raise ValueError(f"break in {self.series}: first_after must be after last_before")
+        return self
+
+
 class BacktestSettings(_Strict):
     """Run-off backtest settings (tests T1 and T2 of docs/validation_report.md)."""
 
@@ -820,6 +836,7 @@ class BacktestSettings(_Strict):
     normal_config: Path
     stress_config: Path
     episodes: list[Episode]
+    confirmed_breaks: list[SeriesBreak] = []
 
     @model_validator(mode="after")
     def _check(self) -> "BacktestSettings":

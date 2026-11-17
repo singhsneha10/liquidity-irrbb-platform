@@ -1,13 +1,14 @@
 """LCR sensitivity to the retail run-off rates (test T3) and a simple benchmark (test T4).
 
 T3 recalculates the LCR of every entity and the group, under both rulebooks, on the latest
-validated day of the synthetic bank, with BOTH retail run-off rates replaced by one stress rate:
-the worst 4-week outflow observed in T1. It reuses the metrics run's own code unchanged
+validated day of the synthetic bank, with BOTH retail run-off rates raised to one stress rate
+(the worst 4-week outflow observed in T1), never below their own rulebook rates. It reuses the metrics run's own code unchanged
 (riskplatform.metrics.run.metric_groups for the entity and group positions, calculate_lcr for the
 ratio); only a copy of each rulebook gets the new rates. Rated against the internal limit (110%,
 config/limits.yaml) and the regulatory minimum (100%), as fixed in docs/validation_report.md.
 
-Break-even rates: the run-off rate (both categories) at which the LCR reaches 110% and 100%,
+Break-even rates: the run-off rate (both categories, each at least its rulebook rate) at which
+the LCR reaches 110% and 100%,
 found by bisection on the LCR itself, which falls as the rate rises. None if even a 100% run-off
 keeps the LCR above the line.
 
@@ -16,7 +17,7 @@ T4: the given percentile of all 4-week H.8 outflows (a rise counts as 0), report
 
 import pandas as pd
 
-from riskplatform.config import GeneratorConfig, LiquidityRules
+from riskplatform.config import GeneratorConfig, LiquidityRules, SeriesBreak
 from riskplatform.metrics.lcr import calculate_lcr
 from riskplatform.metrics.run import metric_groups
 from riskplatform.model_validation.backtest import (
@@ -26,6 +27,7 @@ from riskplatform.model_validation.backtest import (
     RED,
     STABLE,
     forward_outflow,
+    without_breaks,
 )
 
 LEVELS = ("entity", "group")
@@ -33,10 +35,17 @@ BISECTION_STEPS = 60  # interval [0, 1] halved 60 times: far below a basis point
 
 
 def with_retail_run_off(rules: LiquidityRules, rate: float) -> LiquidityRules:
-    """A copy of the rulebook with both retail run-off rates set to `rate`."""
+    """A copy of the rulebook with each retail run-off rate raised to `rate`, never lowered.
+
+    A stress never softens an assumption: a category whose rulebook rate is already above `rate`
+    (less-stable deposits, 10%, against a 6.43% stress) keeps its own rate. Added 2026-11-17,
+    after the results were seen (docs/validation_report.md, section 9): setting both categories
+    to a stress rate below 10% had LOWERED the less-stable rate and raised the "stressed" LCR.
+    """
     raw = rules.model_dump()
     for category in (STABLE, LESS_STABLE):
-        raw["lcr"]["outflows"][category]["rate"] = rate
+        outflow = raw["lcr"]["outflows"][category]
+        outflow["rate"] = max(rate, outflow["rate"])
     return LiquidityRules.model_validate(raw)
 
 
@@ -115,10 +124,14 @@ def t3(
     }
 
 
-def t4(deposits: pd.DataFrame, weeks: int, percentile: float) -> dict[str, float]:
-    """The percentile of all `weeks`-week outflows (rises count as 0) for each H.8 series."""
+def t4(
+    deposits: pd.DataFrame, weeks: int, percentile: float, breaks: list[SeriesBreak] = ()
+) -> dict[str, float]:
+    """The percentile of all `weeks`-week outflows (rises count as 0) for each H.8 series,
+    without the windows spanning a confirmed break (as in T1)."""
     result = {}
     for name, rows in deposits.groupby("series"):
         levels = rows.set_index("date")["deposits_bn"].sort_index()
-        result[name] = float(forward_outflow(levels, weeks).dropna().quantile(percentile))
+        outflow = without_breaks(forward_outflow(levels, weeks), weeks, list(breaks), name)
+        result[name] = float(outflow.dropna().quantile(percentile))
     return result

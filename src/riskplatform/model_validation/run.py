@@ -14,7 +14,9 @@ Steps:
 Writes data/validation/<UTC time>/: results.json (every number, the ratings, the H.8 hash and
 the quality run id), t1_spells.csv (every spell above the stable rate, for the H.8 notes check)
 and t3_sensitivity.csv. Exit codes, as for the pipeline: 0 every rating green, 2 any amber, red
-or inconclusive (needs attention), 1 an error (for example no H.8 file yet).
+or inconclusive overall (needs attention), 1 an error (for example no H.8 file yet).
+Confirmed breaks in the H.8 levels (config/validation.yaml) are left out of T1 and T4; the
+ratings before those exclusions are kept in results.json (`..._before_breaks`).
 """
 
 import argparse
@@ -99,7 +101,10 @@ def run_validation(
         latest_groups(positions, fx, normal_cfg), regimes, stress_rate, limit,
         vcfg.sensitivity.rate_grid,
     )  # fmt: skip
-    t4_result = t4(deposits, settings.h8_weeks, vcfg.sensitivity.benchmark_percentile)
+    t4_result = t4(
+        deposits, settings.h8_weeks, vcfg.sensitivity.benchmark_percentile,
+        settings.confirmed_breaks,
+    )  # fmt: skip
 
     spells = [
         result.pop("spells_above_stable").assign(series=name) for name, result in t1_results.items()
@@ -120,6 +125,9 @@ def run_validation(
             "t4": {"percentile": vcfg.sensitivity.benchmark_percentile, "values": t4_result},
             "ratings": {
                 **{f"t1_{name}": r["rating"] for name, r in t1_results.items()},
+                **{
+                    f"t1_{name}_before_breaks": r["raw"]["rating"] for name, r in t1_results.items()
+                },
                 "t2": t2_result["rating"],
                 "t3": t3_result["rating"],
                 "overall": overall(ratings, t2_result["rating"], t3_result["rating"]),
@@ -161,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("%s: %s", test, rating.upper())
     logger.info("Results in %s", out_dir)
     print(out_dir)
-    return 0 if all(rating == GREEN for rating in ratings.values()) else 2
+    return 0 if ratings["overall"] == GREEN else 2
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from riskplatform.config import BacktestSettings, GeneratorConfig
+from riskplatform.config import BacktestSettings, GeneratorConfig, SeriesBreak
 from riskplatform.metrics.run import load_liquidity_regimes
 
 STABLE, LESS_STABLE = "retail_stable_deposits", "retail_less_stable_deposits"
@@ -46,6 +46,26 @@ def forward_outflow(levels: pd.Series, steps: int) -> pd.Series:
     """The share of the level that has left `steps` rows later (0 for a rise; NaN at the end)."""
     after = levels.shift(-steps)
     return (1.0 - after / levels).clip(lower=0.0)
+
+
+def without_breaks(
+    outflow: pd.Series, steps: int, breaks: list[SeriesBreak], series: str
+) -> pd.Series:
+    """The outflows with every window that spans a confirmed break of `series` set to NaN.
+
+    A window from t to the date `steps` rows later spans a break if it starts on or before the
+    break's last_before and ends on or after its first_after (limitation 7 of the report).
+    """
+    cleaned = outflow.copy()
+    ends = pd.Series(outflow.index, index=outflow.index).shift(-steps)
+    for found in breaks:
+        if found.series != series:
+            continue
+        spans = (outflow.index <= pd.Timestamp(found.last_before)) & (
+            ends >= pd.Timestamp(found.first_after)
+        )
+        cleaned[spans.to_numpy()] = float("nan")
+    return cleaned
 
 
 def rate_t1(worst: float, rates: RunOffRates) -> str:
@@ -81,11 +101,24 @@ def _worst(outflow: pd.Series) -> dict:
     return {"worst": float(valid.max()), "worst_date": valid.idxmax().date().isoformat()}
 
 
-def t1_series(levels: pd.Series, cfg: BacktestSettings, rates: RunOffRates) -> dict:
-    """T1 for one H.8 series (levels indexed by date): the numbers and the rating."""
-    main = forward_outflow(levels, cfg.h8_weeks)
-    conservative = forward_outflow(levels, cfg.h8_conservative_weeks)
+def t1_series(
+    levels: pd.Series, cfg: BacktestSettings, rates: RunOffRates, series: str = ""
+) -> dict:
+    """T1 for one H.8 series (levels indexed by date): the numbers and the rating.
+
+    Windows spanning a confirmed break (cfg.confirmed_breaks) are left out of every figure and
+    the rating; `raw` keeps the worst outflow, the counts and the rating without exclusions, and
+    the spells are listed before exclusions (they are what the limitation 7 check examines).
+    """
+    raw = forward_outflow(levels, cfg.h8_weeks)
+    main = without_breaks(raw, cfg.h8_weeks, cfg.confirmed_breaks, series)
+    conservative = without_breaks(
+        forward_outflow(levels, cfg.h8_conservative_weeks),
+        cfg.h8_conservative_weeks, cfg.confirmed_breaks, series,
+    )  # fmt: skip
     measured = main.dropna()
+    raw_measured = raw.dropna()
+    excluded = raw_measured.index.difference(measured.index)
     episodes = {}
     for episode in cfg.episodes:
         window = main.loc[pd.Timestamp(episode.start) : pd.Timestamp(episode.end)].dropna()
@@ -100,7 +133,14 @@ def t1_series(levels: pd.Series, cfg: BacktestSettings, rates: RunOffRates) -> d
         "above_stable": int((measured > rates.stable).sum()),
         "above_less_stable": int((measured > rates.less_stable).sum()),
         "episodes": episodes,
-        "spells_above_stable": spells(measured, rates.stable),
+        "spells_above_stable": spells(raw_measured, rates.stable),
+        "excluded_windows": [day.date().isoformat() for day in excluded],
+        "raw": {
+            **_worst(raw),
+            "above_stable": int((raw_measured > rates.stable).sum()),
+            "above_less_stable": int((raw_measured > rates.less_stable).sum()),
+            "rating": rate_t1(_worst(raw)["worst"], rates),
+        },
         "rating": rate_t1(worst["worst"], rates),
     }
 
@@ -108,7 +148,7 @@ def t1_series(levels: pd.Series, cfg: BacktestSettings, rates: RunOffRates) -> d
 def t1(deposits: pd.DataFrame, cfg: BacktestSettings, rates: RunOffRates) -> dict[str, dict]:
     """T1 for every H.8 series in the deposits table (date, series, fred_id, deposits_bn)."""
     return {
-        name: t1_series(rows.set_index("date")["deposits_bn"].sort_index(), cfg, rates)
+        name: t1_series(rows.set_index("date")["deposits_bn"].sort_index(), cfg, rates, name)
         for name, rows in deposits.groupby("series")
     }
 

@@ -35,6 +35,22 @@ backtest:
     - {name: "2008 Lehman Brothers", start: 2008-09-01, end: 2008-12-31}
     - {name: "2020 COVID-19", start: 2020-03-01, end: 2020-05-31}
     - {name: "2023 Silicon Valley Bank", start: 2023-03-01, end: 2023-05-31}
+  # Confirmed breaks in the H.8 levels (docs/validation_report.md, limitation 7): every window
+  # spanning the step from `last_before` to `first_after` is left out of T1 and T4, because the
+  # change in level there is not a withdrawal. The results keep the rating without exclusions.
+  # Added AFTER the results were seen (logged in the report, section 9), on documentary evidence.
+  confirmed_breaks:
+    - series: small_banks
+      last_before: 1985-03-27
+      first_after: 1985-04-03
+      evidence: >-
+        FRED's large-bank deposit series (DPSLCBW027NBOG) and small-bank total assets
+        (TLASCBW027NBOG) begin on 1985-04-03: the large/small split of today's series starts that
+        week. The H.8 release of 5 April 1985 (FRASER) split domestic banks by total assets under
+        and over $1.4bn (as of 31 Dec 1982), with 902.7bn of deposits under $1.4bn on 6 March 1985,
+        against 316.4bn in FRED's small-bank series that day: the earlier small-bank levels are a
+        later reconstruction on another basis. In the week of the step, small banks -$30.1bn,
+        other banks +$69.5bn, all banks +$39.5bn.
 
 # Sensitivity (T3) and benchmark (T4). T3's stress rate is the worst T1 outflow (computed, not
 # set here); the internal limit (110%) and the minimum (100%) come from config/limits.yaml and

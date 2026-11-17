@@ -133,3 +133,36 @@ def test_t2_fails_when_the_backtest_cannot_see_the_run(banks):
     normal, _, stress_cfg = banks
     result = t2(normal, normal, stress_cfg, CFG, RATES)
     assert not result["found_run"] and result["rating"] == RED
+
+
+# --- Confirmed breaks (limitation 7) ---------------------------------------------------------------
+
+
+def _break(series="s", before="2023-02-01", after="2023-02-08"):
+    from riskplatform.config import SeriesBreak
+
+    return SeriesBreak(series=series, last_before=before, first_after=after, evidence="test")
+
+
+def test_without_breaks_blanks_exactly_the_windows_spanning_the_step():
+    """Weekly from 4 Jan; the step is 1 Feb -> 8 Feb. 2-week windows spanning it start on
+    25 Jan (to 8 Feb) and 1 Feb (to 15 Feb); the others are kept."""
+    from riskplatform.model_validation.backtest import without_breaks
+
+    out = forward_outflow(_weekly([100.0] * 8), steps=2)
+    cleaned = without_breaks(out, 2, [_break()], "s")
+    blanked = cleaned[cleaned.isna() & out.notna()].index.strftime("%m-%d").tolist()
+    assert blanked == ["01-25", "02-01"]
+    assert without_breaks(out, 2, [_break(series="other")], "s").equals(out)  # other series
+
+
+def test_a_confirmed_break_leaves_t1_but_the_raw_rating_is_kept():
+    """A 15% one-week step down at a confirmed break: RED before exclusions, GREEN after."""
+    levels = _weekly([100.0] * 5 + [85.0] * 10)  # step between week 5 and week 6
+    step_before, step_after = levels.index[4].date(), levels.index[5].date()
+    cfg = CFG.model_copy(update={"confirmed_breaks": [_break("s", step_before, step_after)]})
+    result = t1_series(levels, cfg, RATES, "s")
+    assert result["raw"]["rating"] == RED and result["raw"]["worst"] == pytest.approx(0.15)
+    assert result["rating"] == GREEN and result["main"]["worst"] == 0.0
+    assert len(result["excluded_windows"]) == CFG.h8_weeks  # every 4-week window across the step
+    assert len(result["spells_above_stable"]) == 1  # still listed for the check

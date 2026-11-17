@@ -68,8 +68,9 @@ synthetic bank (or real curves) -> raw files + control totals
 
 **Model validation** of the LCR's retail deposit run-off rates (5% and 10%), against 54 years of
 Federal Reserve H.8 deposit data and a planted deposit run. The pass/fail criteria were written
-before any result. The overall rating is **RED**, resting on one unconfirmed 1985 data point.
-In 2008, 2020 and 2023, system-wide deposits fell by at most 3.9% in 4 weeks, well within the
+before any result. The overall rating is **AMBER**: calendar spikes in the all-bank series (a
+first RED was traced to a confirmed 1985 break in the Fed's data, and re-rated openly). In
+2008, 2020 and 2023, system-wide deposits fell by at most 3.9% in 4 weeks, well within the
 rates. But a run the size of Silicon Valley Bank's would take two entities below the LCR
 minimum. Details and
 recommendations: [validation report](docs/validation_report.md).

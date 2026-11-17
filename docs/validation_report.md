@@ -151,12 +151,19 @@ to 2026-11-04, SHA-256 `f68ce321...`); synthetic banks from `config/generator.ya
 `config/generator_stress.yaml` (60 business days to 2026-10-23). Run-off rates read from
 `config/liquidity/` (both rulebooks: 5% and 10%). T3 and T4: step 9.5, same day.
 
-### 6.1 T1 Backtest (Fed H.8): all commercial banks AMBER, small banks RED
+**Re-rated on 2026-11-17, after the results were seen** (section 9): the March 1985 small-bank
+fall is a confirmed break in the series and is left out under limitation 7, and T3 no longer
+lets a stress lower a rulebook rate. Every figure before those changes is kept below.
 
-| Series | 4-week windows | Worst 4-week outflow | Worst 5-week (check) | Weeks above 5% | Weeks above 10% | Rating |
-|---|---:|---|---|---:|---:|---|
-| All commercial banks | 2,806 | **6.43%** (from 1975-01-01) | 5.89% (from 2001-09-12) | 6 | 0 | **AMBER** |
-| Small banks | 2,806 | **10.69%** (from 1985-03-27) | 10.82% (from 1985-03-20) | 4 | 2 | **RED** |
+### 6.1 T1 Backtest (Fed H.8): all commercial banks AMBER, small banks GREEN
+
+Windows spanning the confirmed March 1985 break (section 6.2) are left out; the last column
+keeps the result before that exclusion.
+
+| Series | 4-week windows | Worst 4-week outflow | Worst 5-week (check) | Weeks above 5% | Weeks above 10% | Rating | Before excluding the 1985 break |
+|---|---:|---|---|---:|---:|---|---|
+| All commercial banks | 2,806 | **6.43%** (from 1975-01-01) | 5.89% (from 2001-09-12) | 6 | 0 | **AMBER** | the same (no break) |
+| Small banks | 2,802 | **4.98%** (from 1986-12-31) | 3.73% (from 2023-02-15) | 0 | 0 | **GREEN** | 10.69% (from 1985-03-27), 4 above 5%, 2 above 10%: RED |
 
 Worst 4-week outflow in the named stress episodes (windows starting in the episode):
 
@@ -190,24 +197,33 @@ Fed's H.8 "Notes on Data" (federalreserve.gov/releases/h8/h8notes.htm, read 2026
   11 September 2001) and measures the spike unwinding. These are real balance movements, not
   breaks, so **they count** under section 4, and the series stays AMBER. No sustained
   withdrawal is visible.
-- *Small banks:* the March 1985 fall has the signature of a reclassification between the bank
-  panels. Money leaving the banking system does not reappear at other banks in the same week,
-  and here the all-bank total rose. But the Fed's notes, which document structure events only
-  from October 1989, **cannot confirm a break**. The section 5 rule counts an outflow unless
-  the check shows otherwise, so the 1985 outflow **counts**, and the series stays **RED**.
-  (A secondary source, not confirmed on the Fed's site, states that H.8 reported large and
-  small banks separately only from 1988; if so, earlier small-bank levels are reconstructions.)
+- *Small banks:* the March 1985 fall **is a break in the series, not a withdrawal**. This was
+  first counted, because the Fed's structure notes start only in October 1989. It was then
+  confirmed from the Fed's own published data (recommendation R1, 2026-11-17, after the results
+  were seen):
+  - FRED's **large-bank** deposit series (`DPSLCBW027NBOG`) and small-bank total assets
+    (`TLASCBW027NBOG`) both **begin on 3 April 1985**, the week of the fall: today's large/small
+    split starts there.
+  - The H.8 release of **5 April 1985** (FRASER, the St. Louis Fed's archive) split domestic banks
+    by total assets **under and over $1.4 billion** (footnote 2: "Size classification is based on
+    total assets in domestic offices as of December 31, 1982"), with **$902.7bn** of deposits at
+    banks under $1.4bn on 6 March 1985. FRED's small-bank series shows **$316.4bn** that day, so
+    its earlier levels are a later reconstruction on another basis. The all-bank totals agree
+    ($1,633.6bn published, $1,639.5bn on FRED).
+  - In the week of the fall, small banks -$30.1bn, other banks +$69.5bn, all banks +$39.5bn.
+
+  Under limitation 7, the four windows spanning 27 March to 3 April 1985 are left out
+  (`confirmed_breaks` in `config/validation.yaml`). The series is **GREEN**; it was **RED**
+  before the exclusion.
 
 ### 6.3 Supplementary figures (not ratings)
 
-Shown so the reader can see what the RED rests on. They do not replace the ratings above.
+The worst 4-week outflow in the period the Fed's structure notes cover (October 1989 onwards):
 
-| Series | Worst 4-week outflow without the 4 windows crossing 27 March to 3 April 1985 | Worst since October 1989 (period covered by the Fed's notes) |
-|---|---|---|
-| All commercial banks | 6.43% (1975-01-01), 6 weeks above 5% | 5.28% (2001-09-12), 1 week above 5% |
-| Small banks | 4.98% (1986-12-31), none above 5% | 3.87% (2023-03-01), none above 5% |
-
-The small-bank RED rests entirely on one week in 1985.
+| Series | Worst since October 1989 |
+|---|---|
+| All commercial banks | 5.28% (2001-09-12, the 9/11 spike; 1 week above 5%) |
+| Small banks | 3.87% (2023-03-01, Silicon Valley Bank; none above 5%) |
 
 ### 6.4 T2 Detection check: GREEN
 
@@ -223,32 +239,37 @@ percentage point. **T1 is therefore conclusive.**
 
 On the latest validated day of the default synthetic bank (2026-10-23; `riskplatform-validate`
 generates it and runs the quality layer on it afresh, so the same configs give the same numbers),
-with both retail run-off rates replaced by the worst T1 outflow,
-**10.69%**, and the LCR recalculated by the platform's own code (with the rulebooks' own rates
-it reproduces the published LCR exactly, `tests/test_sensitivity.py`).
+with both retail run-off rates raised to the worst T1 outflow, **6.43%**, but never
+below their own rulebook rates (so the stable rate rises from 5% and the less-stable rate stays
+at 10%). The LCR is recalculated by the platform's own code; with the rulebooks' own rates it
+reproduces the published LCR exactly (`tests/test_sensitivity.py`).
 
-| Rulebook | Who | LCR now | LCR at 10.69% | Break-even run-off at 110% | at 100% |
+| Rulebook | Who | LCR now | LCR at 6.43% | Break-even run-off at 110% | at 100% |
 |---|---|---:|---:|---:|---:|
-| Basel | BANK_EU | 171.6% | 147.4% | 19.2% | 22.5% |
-| Basel | BANK_UK | 167.0% | **146.0%** (lowest) | 20.0% | 23.8% |
-| Basel | BANK_US | 237.1% | 198.2% | 29.1% | 33.3% |
-| Basel | Group | 186.6% | 160.2% | 22.4% | 26.1% |
-| UK PRA | BANK_EU | 173.0% | 148.6% | 19.5% | 22.8% |
-| UK PRA | BANK_UK | 168.2% | 147.1% | 20.3% | 24.1% |
-| UK PRA | BANK_US | 238.7% | 199.6% | 29.4% | 33.6% |
-| UK PRA | Group | 188.0% | 161.4% | 22.7% | 26.4% |
+| Basel | BANK_EU | 171.6% | 165.4% | 19.2% | 22.5% |
+| Basel | BANK_UK | 167.0% | **161.6%** (lowest) | 20.0% | 23.8% |
+| Basel | BANK_US | 237.1% | 226.7% | 29.1% | 33.3% |
+| Basel | Group | 186.6% | 179.7% | 22.4% | 26.1% |
+| UK PRA | BANK_EU | 173.0% | 166.8% | 19.5% | 22.8% |
+| UK PRA | BANK_UK | 168.2% | 162.9% | 20.3% | 24.1% |
+| UK PRA | BANK_US | 238.7% | 228.2% | 29.4% | 33.6% |
+| UK PRA | Group | 188.0% | 181.1% | 22.7% | 26.4% |
 
-Every LCR stays above 110% (lowest 146.0%): **GREEN**. A break-even rate is one run-off rate
-for both retail categories at which the LCR reaches the line.
+Every LCR stays above 110% (lowest 161.6%): **GREEN**. A break-even
+rate is one run-off rate for both retail categories at which the LCR reaches the line.
 
-LCR as the run-off rate rises (both categories, Basel; UK PRA is at most 1.8 points higher):
+Before the re-rating, T3 used 10.69% (the 1985 figure). It was GREEN then too: lowest LCR 146.0%
+(BANK_UK, Basel). The rulebook floor did not matter there, because 10.69% is above both rates.
+
+LCR as the run-off rate rises (both categories, each at least its rulebook rate; Basel; UK PRA is
+at most 1.6 points higher):
 
 | Run-off | 5% | 10% | 15% | 20% | 25% | 30% |
 |---|---:|---:|---:|---:|---:|---:|
-| BANK_EU | 190.9% | 151.6% | 125.7% | 107.4% | 93.7% | 83.1% |
-| BANK_UK | 182.6% | 149.6% | 126.8% | 109.97% | 97.1% | 86.9% |
-| BANK_US | 263.5% | 204.4% | 167.0% | 141.1% | 122.2% | 107.8% |
-| Group | 206.0% | 164.7% | 137.2% | 117.6% | 102.8% | 91.4% |
+| BANK_EU | 171.6% | 151.6% | 125.7% | 107.4% | 93.7% | 83.1% |
+| BANK_UK | 167.0% | 149.6% | 126.8% | 109.97% | 97.1% | 86.9% |
+| BANK_US | 237.1% | 204.4% | 167.0% | 141.1% | 122.2% | 107.8% |
+| Group | 186.6% | 164.7% | 137.2% | 117.5% | 102.8% | 91.4% |
 
 **What T3 does not show (limitation 1).** The stress rate comes from system totals. A run on
 one bank can be far larger: Silicon Valley Bank lost about a quarter of its deposits in a single
@@ -258,64 +279,67 @@ a run of that kind.
 
 ### 6.6 T4 Benchmark (report only)
 
-The 99th percentile of all 4-week outflows, 1973-2026 (2,806 windows each; a rise counts as 0):
+The 99th percentile of all 4-week outflows, 1973-2026 (a rise counts as 0; the 4 windows
+spanning the 1985 break are left out of the small-bank series; with them it was 2.41%):
 
 | Series | 99th percentile | Assumed rates |
 |---|---:|---|
 | All commercial banks | 2.92% | 5% stable, 10% less stable |
-| Small banks | 2.41% | 5% stable, 10% less stable |
+| Small banks | 2.18% | 5% stable, 10% less stable |
 
 A simple statistical alternative would set the run-off well below both regulatory rates: by
 this measure the rates are conservative for system-wide deposits.
 
 ### 6.7 Ratings
 
-| Test | Rating |
-|---|---|
-| T1 All commercial banks | AMBER |
-| T1 Small banks | RED |
-| T2 Detection check | GREEN (T1 conclusive) |
-| T3 Sensitivity | GREEN |
-| T4 Benchmark | report only (2.92% and 2.41%) |
-| **Overall** (worst of T1 and T3, as T2 is green) | **RED** |
+| Test | Rating | Before the re-rating (section 9) |
+|---|---|---|
+| T1 All commercial banks | AMBER | AMBER |
+| T1 Small banks | GREEN | RED |
+| T2 Detection check | GREEN (T1 conclusive) | GREEN |
+| T3 Sensitivity | GREEN | GREEN |
+| T4 Benchmark | report only (2.92% and 2.18%) | report only (2.92% and 2.41%) |
+| **Overall** (worst of T1 and T3, as T2 is green) | **AMBER** | RED |
 
 ## 7. Conclusion and recommendations
 
 ### 7.1 Conclusion
 
-**Overall rating: RED** under the criteria fixed before the results (section 4).
+**Overall rating: AMBER**, under the criteria fixed before the results (section 4), after
+excluding one confirmed break in the data. It was RED before that exclusion (section 9).
 
-1. **The red comes from one data point.** It rests entirely on four overlapping windows across
-   one week, 27 March to 3 April 1985, in the small-bank series. The levels show the
-   signature of a reclassification between bank panels: small banks -$30.1bn, other banks
-   +$69.5bn, and the all-bank total up. The Fed's structure notes start in October 1989 and
-   cannot confirm it, so under the rule fixed in advance it counts. Without those four windows,
-   the small-bank worst is 4.98%. In the period the Fed documents (October 1989 onwards), it is
-   3.87%, in March 2023 (section 6.3).
+1. **The original RED was a data break, now confirmed.** It rested entirely on four windows
+   across one week, 27 March to 3 April 1985, in the small-bank series. The Fed's own data shows
+   that today's large/small split begins that very week, and that the 1985 release measured
+   small banks differently (section 6.2). With those windows left out, small banks are GREEN:
+   worst 4.98%, and 3.87% since October 1989 (Silicon Valley Bank,
+   March 2023).
 2. **The amber is calendar effects, not withdrawals.** Every all-bank spell above 5% starts on a
    one-week spike and measures it unwinding: four year-ends, one quarter-end, and 11 September
    2001. None shows a sustained withdrawal. In the three named crises, system deposits fell by
-   at most 2.4% in 4 weeks, and in 2020 they rose.
+   at most 2.4% in 4 weeks, and in 2020 they rose. A better measure would remove this amber
+   (recommendation R5); it is not applied after the fact.
 3. **Against system-wide history the rates are conservative.** The 99th percentile of 4-week
-   outflows is 2.92% (all banks) and 2.41% (small banks), below both the 5% and 10% rates
-   (T4). The backtest itself is reliable: it finds a planted run to within 0.1 point (T2).
+   outflows is 2.92% (all banks) and 2.18%
+   (small banks), below both the 5% and 10% rates (T4). The backtest itself is reliable: it
+   finds a planted run to within 0.1 point (T2).
 4. **Against a single-bank run they are not, and that is the bank's real exposure.** At the
-   worst system-wide outflow (10.69%), every LCR stays at or above 146.0% (T3). But the LCR
-   falls to the 110% internal limit at a 19.2-29.4% run-off, and to the 100% minimum at
-   22.5-33.6%, depending on the entity. Silicon Valley Bank lost about a quarter of its
-   deposits in one day: a run of that size would take BANK_EU and BANK_UK below the minimum
-   (section 6.5). The system data cannot show this risk (limitation 1).
+   worst system-wide outflow (6.43%), every LCR stays at or above
+   161.6% (T3). But the LCR falls to the 110% internal limit at a
+   19.2-29.4% run-off, and to the 100% minimum at 22.5-33.6%, depending on the entity. Silicon
+   Valley Bank lost about a quarter of its deposits in one day: a run of that size would take
+   BANK_EU and BANK_UK below the minimum (section 6.5). The system data cannot show this risk
+   (limitation 1).
 
 **In short:** the 5% and 10% rates are not contradicted by 54 years of US system-wide deposit
-data, once one unconfirmed 1985 data point is set aside, and the bank's LCR has ample room for
-the worst system-wide outflow. The evidence says nothing reassuring about a run on one bank.
-That is where the recommendations focus.
+data, and the bank's LCR has ample room for the worst system-wide outflow. The evidence says
+nothing reassuring about a run on one bank. That is where the recommendations focus.
 
 ### 7.2 Recommendations
 
 | # | Recommendation | Why | Priority |
 |---|---|---|---|
-| R1 | **Resolve the 1985 data point.** Read the H.8 releases of spring 1985 (historical releases, e.g. FRASER, the St. Louis Fed's archive) or obtain the Fed's break-adjusted series. If a panel shift is confirmed, record it under limitation 7 and re-rate. | The overall RED rests on it. | High |
+| R1 | **Resolve the 1985 data point.** *Done 2026-11-17:* confirmed as a break from the Fed's own data and the April 1985 H.8 release; excluded under limitation 7 and re-rated (sections 6.2 and 9). | The overall RED rested on it. | Done |
 | R2 | **Add a single-bank view.** Obtain bank-level deposit data for banks that failed or nearly failed (for example quarterly regulatory filings around March 2023), and run T1 and T3 on them. | System totals hide single-bank runs (limitation 1), and T3 shows the bank cannot withstand one of SVB's size. | High |
 | R3 | **Set a reverse stress trigger.** Report the break-even run-off rates (19-34%) monthly beside the LCR. Treat a fall in the lowest break-even below a set level (judgement, e.g. 20%) as an early warning for the contingency funding plan. | It turns T3 into ongoing monitoring of how close the bank is to its limits. | Medium |
 | R4 | **Use the T4 percentile as an early-warning indicator.** Flag any 4-week retail outflow above about 3% (the system 99th percentile) at an entity. | It is rarer than 1 in 100 for the system, and far below the regulatory rates. | Medium |
@@ -387,7 +411,23 @@ elsewhere.
 
 ## 9. Changes to sections 1-5
 
-After results were seen: none so far.
+After results were seen (2026-11-17), both recorded here with their reasons:
+1. **Limitation 7 applied to the March 1985 small-bank fall** (recommendation R1). The section 5
+   rule was always to check every outflow above 5% for a break before counting it. The Fed's
+   structure notes (from 1989) could not settle this one, so it was first counted (overall RED).
+   Documentary evidence found afterwards (section 6.2) confirms a break where today's large/small
+   split begins (3 April 1985). The four windows spanning it are left out through
+   `confirmed_breaks` in `config/validation.yaml`, which records the evidence. Small banks:
+   RED -> GREEN. T3's stress rate (the worst T1 outflow): 10.69% -> 6.43%. T4 small
+   banks: 2.41% -> 2.18%. Overall: RED -> **AMBER**. The author decided
+   this, and the results keep the ratings from before the exclusion.
+2. **T3 never lowers a rulebook rate.** Section 4 says the stress rate is applied to both retail
+   categories. At 6.43%, below the 10% less-stable rate, that lowered the less-stable rate and
+   gave "stressed" LCRs above today's, which is not a stress. Each category now takes the stress
+   rate or its own rulebook rate, whichever is higher. This changes no rating: T3 was GREEN
+   either way, and at 10.69% the floor did not apply.
+
+Neither change touches a threshold in section 4.
 
 Before any result (step 9.2, 2026-11-17, while checking the data source):
 - Section 3: the FRED series IDs, units and start date, as checked on FRED.

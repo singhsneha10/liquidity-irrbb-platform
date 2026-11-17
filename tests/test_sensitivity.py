@@ -109,3 +109,27 @@ def test_t4_percentile_by_hand():
     )
     assert t4(deposits, weeks=1, percentile=0.5)["s"] == pytest.approx(0.02)
     assert t4(deposits, weeks=1, percentile=1.0)["s"] == pytest.approx(0.10)
+
+
+def test_a_stress_never_lowers_a_rulebook_rate(bank):
+    """A 6.43% stress raises the stable rate (5%) but keeps the less-stable rate at its 10%:
+    a stress must not soften an assumption (the flaw found after the results, section 9)."""
+    cfg, positions, fx, regimes = bank
+    rules = regimes["basel"]
+    stressed = with_retail_run_off(rules, 0.0643)
+    assert stressed.lcr.outflows[STABLE].rate == 0.0643
+    assert stressed.lcr.outflows[LESS_STABLE].rate == 0.10
+    for _, group in latest_groups(positions, fx, cfg):
+        for rate in (0.0, 0.03, 0.0643, 0.12):
+            assert lcr_at(group, rules, rate) <= lcr_at(group, rules, None) + 1e-12
+
+
+def test_t4_leaves_out_windows_spanning_a_confirmed_break():
+    from riskplatform.config import SeriesBreak
+
+    levels = [100.0, 100.0, 50.0, 50.0, 50.0]  # a 50% "outflow" that is a break
+    deposits = pd.DataFrame({"date": pd.date_range("2023-01-04", periods=5, freq="7D"),
+                             "series": "s", "fred_id": "X", "deposits_bn": levels})  # fmt: skip
+    gap = SeriesBreak(series="s", last_before="2023-01-11", first_after="2023-01-18", evidence="t")
+    assert t4(deposits, weeks=1, percentile=1.0)["s"] == pytest.approx(0.5)
+    assert t4(deposits, weeks=1, percentile=1.0, breaks=[gap])["s"] == 0.0

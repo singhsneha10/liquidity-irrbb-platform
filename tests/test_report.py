@@ -87,7 +87,7 @@ def test_irrbb_section_flags_the_outlier(board, text):
     assert text.count("OUTLIER") == sum(
         int(data.eve_against_tier1(board.con, r)["outlier"].sum()) for r in report.REGIMES
     )
-    assert "UK ICAA 9.4A" in text and "SRP31.82" in text
+    assert "UK ICAA 9.4A, SS31/15 2.7B" in text and "SRP31.82" in text
 
 
 def test_drivers_and_data_quality_are_the_runs(board, text):

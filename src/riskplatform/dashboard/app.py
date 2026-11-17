@@ -302,7 +302,7 @@ def liquidity_tab(con, regime: str) -> None:
 
 def irrbb_tab(con, regime: str) -> None:
     risk = data.eve_against_tier1(con, regime)
-    st.markdown("**Worst EVE loss against the outlier test (SRP31.82)**")
+    st.markdown("**Worst EVE loss against the outlier test** (Basel SRP31.82; UK ICAA 9.4A)")
     st.altair_chart(outlier_chart(risk))
     who = st.selectbox("Entity or group", list(risk["who"]), key="irrbb_who")
     left, right = st.columns(2)
