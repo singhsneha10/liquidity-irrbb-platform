@@ -88,3 +88,44 @@ single_bank_runs:
        quote: "between March 10 and March 14, SBNY lost 50 percent of its March 6 deposits and FRB lost 47 percent"}
     - {bank: "First Republic Bank", period: "7-17 March", outflow: 0.36, at_least: false,
        quote: "FRB lost 36 percent of its March 6 deposits (or 54 percent if excluding the $30 billion deposited by a consortium of 11 large banks on March 16)"}
+
+# T6 (report only; plan fixed in the report's section 6.9 before this data was downloaded):
+# quarterly deposits of every FDIC-insured institution, and the structure events that move
+# deposits without depositors withdrawing them. Fetch with:
+#   python -m riskplatform.model_validation.fdic      (needs the internet once; several minutes)
+# FDIC BankFind API, free, no key. Saved under data/ (not committed).
+fdic:
+  api_url: "https://api.fdic.gov/banks"
+  first_quarter: 2001-03-31
+  events_from: 2000-10-01     # from the start of the quarter before the first quarter
+  page_limit: 10000           # the API's maximum rows per request; larger chunks are split
+  deposits_file: data/external/fdic_deposits.parquet
+  events_file: data/external/fdic_structure_events.parquet
+  provenance_file: data/external/fdic_provenance.json
+  user_agent: riskplatform-validation/0.1
+  timeout_seconds: 300
+  # The codes fixed in the plan (section 6.9), with the FDIC's own descriptions.
+  deposit_moving_codes:
+    211: "Failure - Whole Institution"
+    213: "Merger - Assisted"
+    215: "Failure Multiple Acquirer"
+    216: "Bridge Bank Resolution"
+    217: "Passthrough Receivorship/Conservatorship Resolution"
+    221: "Absorbtion - Without Assistance"
+    222: "Consolidated - Without Assistance"
+    223: "Merger -Without Assistance"
+    224: "Affiliated Institution Merger (Pooling) (i.e. Corporate Reorganization"
+    225: "Partial Purchase & Assumption - Without Assistance"
+    230: "Closing - Failure Payoff"
+    235: "Rtc Supervised Payoffs, Liquidations, and Closings"
+    240: "Closing - Voluntary"
+    260: "Bank Closed by Chartering Agency Pending Sale"
+    712: "Branch Purchased"
+    713: "Branch Acquired in Merger/Consolidation/Failure"
+    722: "Branch Sold"
+    724: "Branches Divested in Multiple Acquirer Failure"
+    810: "Participated in Absorbtion/Consolidation/Merger"
+    811: "Participated in FDIC Assisted Merger"
+    812: "Rtc Assisted Merger"
+    820: "Phantom (Interim) Corporate Reorganization"
+    830: "Open Bank Assistance"

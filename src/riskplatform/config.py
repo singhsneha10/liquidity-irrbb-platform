@@ -878,6 +878,30 @@ class SingleBankRuns(_Strict):
     runs: list[DocumentedRun] = Field(min_length=1)
 
 
+class FdicSource(_Strict):
+    """FDIC BankFind API: quarterly deposits and structure events (test T6)."""
+
+    api_url: str = Field(min_length=1)
+    first_quarter: date
+    events_from: date
+    page_limit: int = Field(gt=0)
+    deposits_file: Path
+    events_file: Path
+    provenance_file: Path
+    user_agent: str = Field(min_length=1)
+    timeout_seconds: float = Field(gt=0)
+    deposit_moving_codes: dict[int, str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> "FdicSource":
+        if (self.first_quarter.month, self.first_quarter.day) not in {(3, 31), (6, 30), (9, 30),
+                                                                       (12, 31)}:  # fmt: skip
+            raise ValueError(f"first_quarter {self.first_quarter} is not a quarter end")
+        if self.events_from >= self.first_quarter:
+            raise ValueError("events_from must be before first_quarter")
+        return self
+
+
 class ValidationConfig(_Strict):
     """Model validation settings (config/validation.yaml); criteria: docs/validation_report.md."""
 
@@ -885,6 +909,7 @@ class ValidationConfig(_Strict):
     backtest: BacktestSettings
     sensitivity: SensitivitySettings
     single_bank_runs: SingleBankRuns
+    fdic: FdicSource
 
 
 def load_validation_config(path: str | Path) -> ValidationConfig:
