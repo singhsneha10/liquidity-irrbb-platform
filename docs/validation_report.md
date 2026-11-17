@@ -281,7 +281,87 @@ this measure the rates are conservative for system-wide deposits.
 
 ## 7. Conclusion and recommendations
 
-*To be added in step 9.7.*
+### 7.1 Conclusion
+
+**Overall rating: RED** under the criteria fixed before the results (section 4).
+
+1. **The red comes from one data point.** It rests entirely on four overlapping windows across
+   one week, 27 March to 3 April 1985, in the small-bank series. The levels show the
+   signature of a reclassification between bank panels: small banks -$30.1bn, other banks
+   +$69.5bn, and the all-bank total up. The Fed's structure notes start in October 1989 and
+   cannot confirm it, so under the rule fixed in advance it counts. Without those four windows,
+   the small-bank worst is 4.98%. In the period the Fed documents (October 1989 onwards), it is
+   3.87%, in March 2023 (section 6.3).
+2. **The amber is calendar effects, not withdrawals.** Every all-bank spell above 5% starts on a
+   one-week spike and measures it unwinding: four year-ends, one quarter-end, and 11 September
+   2001. None shows a sustained withdrawal. In the three named crises, system deposits fell by
+   at most 2.4% in 4 weeks, and in 2020 they rose.
+3. **Against system-wide history the rates are conservative.** The 99th percentile of 4-week
+   outflows is 2.92% (all banks) and 2.41% (small banks), below both the 5% and 10% rates
+   (T4). The backtest itself is reliable: it finds a planted run to within 0.1 point (T2).
+4. **Against a single-bank run they are not, and that is the bank's real exposure.** At the
+   worst system-wide outflow (10.69%), every LCR stays at or above 146.0% (T3). But the LCR
+   falls to the 110% internal limit at a 19.2-29.4% run-off, and to the 100% minimum at
+   22.5-33.6%, depending on the entity. Silicon Valley Bank lost about a quarter of its
+   deposits in one day: a run of that size would take BANK_EU and BANK_UK below the minimum
+   (section 6.5). The system data cannot show this risk (limitation 1).
+
+**In short:** the 5% and 10% rates are not contradicted by 54 years of US system-wide deposit
+data, once one unconfirmed 1985 data point is set aside, and the bank's LCR has ample room for
+the worst system-wide outflow. The evidence says nothing reassuring about a run on one bank.
+That is where the recommendations focus.
+
+### 7.2 Recommendations
+
+| # | Recommendation | Why | Priority |
+|---|---|---|---|
+| R1 | **Resolve the 1985 data point.** Read the H.8 releases of spring 1985 (historical releases, e.g. FRASER, the St. Louis Fed's archive) or obtain the Fed's break-adjusted series. If a panel shift is confirmed, record it under limitation 7 and re-rate. | The overall RED rests on it. | High |
+| R2 | **Add a single-bank view.** Obtain bank-level deposit data for banks that failed or nearly failed (for example quarterly regulatory filings around March 2023), and run T1 and T3 on them. | System totals hide single-bank runs (limitation 1), and T3 shows the bank cannot withstand one of SVB's size. | High |
+| R3 | **Set a reverse stress trigger.** Report the break-even run-off rates (19-34%) monthly beside the LCR. Treat a fall in the lowest break-even below a set level (judgement, e.g. 20%) as an early warning for the contingency funding plan. | It turns T3 into ongoing monitoring of how close the bank is to its limits. | Medium |
+| R4 | **Use the T4 percentile as an early-warning indicator.** Flag any 4-week retail outflow above about 3% (the system 99th percentile) at an entity. | It is rarer than 1 in 100 for the system, and far below the regulatory rates. | Medium |
+| R5 | **Measure outflows from a robust base in a future version.** For example, use the average of the previous 4 weeks instead of a single week, or report window starts at year- and quarter-ends separately. Do not change this validation's criteria after the fact; apply it at the next validation. | The amber is calendar spikes unwinding (section 6.2); the current measure overstates outflows that start on a spike. | Low |
+| R6 | **Re-run on new data.** Run `riskplatform-validate` after each H.8 refresh (weekly data), at least once a year. Treat a new spell above 5% as a trigger for review. | Ongoing monitoring (SS1/23 Principle 4.4; SR 26-2, section V). | Low |
+| R7 | **Have it reviewed independently.** In a real bank, a validation function independent of the people who built the LCR calculation should re-perform this work. | Here the builder validated its own work (section 7.3). | Note |
+
+### 7.3 Frameworks and the standing of this validation
+
+This validation follows the elements of supervisory model risk guidance as **good practice**,
+and does not claim to meet a requirement. Each source below was checked against its official
+text on 2026-11-17.
+
+**PRA SS1/23, "Model risk management principles for banks"** (Bank of England; April 2026
+version, effective 23 April 2026, replacing the May 2023 version):
+- **Scope (1.2):** it applies to UK firms with internal model approval for regulatory capital;
+  other firms "may find the proposed principles useful". The synthetic bank has no such
+  approval, so SS1/23 is followed here as good practice.
+- **Principle 1.1(b):** material deterministic quantitative methods that are not models
+  should still be considered for the model risk management framework. The run-off rates are
+  prescribed parameters in a rule-based calculation, but they bear materially on the bank's
+  liquidity position.
+- **Principle 3.3(b)(i):** backward-looking tests "using actual observations across a variety
+  of economic and market conditions". This is **T1** (54 years, three named crises).
+- **Principle 3.3(b)(ii):** forward-looking scenarios, with "sensitivity analysis to determine
+  the model operating boundaries". This is **T3** and its break-even rates.
+- **Principles 3.3(b)(iii) and 4.4(c)(i):** comparison with challenger models and
+  benchmarks. This is **T4**.
+- **Principle 4.4(a):** performance assessed against thresholds for acceptable performance.
+  Here those are the criteria in section 4, fixed before any result.
+- **Principle 4 (independent validation):** **not met.** The work was done by the people who
+  built the calculation (recommendation R7).
+
+**Federal Reserve SR 26-2, "Revised Guidance on Model Risk Management"** (Fed, OCC and FDIC,
+17 April 2026). It supersedes **SR 11-7** (2011), which is therefore not cited as current
+guidance.
+- **Section II:** its definition of a model **excludes** "deterministic rule-based processes",
+  so the LCR with prescribed rates may fall outside its scope.
+- **Section V:** its components of validation are followed here: conceptual soundness
+  (section 1 and the limitations); outcomes analysis, "such as back-testing" (**T1**, with
+  **T2** proving the back-test can find a run); and ongoing monitoring (R6).
+
+**What this validation is not.** The run-off rates are set by the regulators (Basel LCR40,
+the PRA's LCR (CRR) Part), and a bank must use them. Nothing here proposes changing them for
+regulatory reporting. The findings bear on how much the bank should **rely** on the LCR
+alone: its internal stress testing, its limits and its contingency funding plan.
 
 ## 8. Reproducing this validation
 
