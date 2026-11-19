@@ -258,3 +258,30 @@ def eve_share_trend(con: duckdb.DuckDBPyConnection, regime: str) -> pd.DataFrame
         """,
         regime,
     )
+
+
+def rulebook_comparison(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    """LCR, NSFR and EVE loss / Tier 1 under both rulebooks on the latest date, per entity and
+    the group, with the difference (UK PRA minus Basel, a fraction: 0.014 = 1.4 points)."""
+    latest = "date = (SELECT max(date) FROM {view})"
+    parts = " UNION ALL ".join(
+        f"SELECT '{name}' AS metric, {order} AS ord, {WHO}, regime, {value} AS value "
+        f"FROM {view} WHERE {LEVELS} AND {latest.format(view=view)}"
+        for name, order, view, value in (
+            ("LCR", 1, "lcr", "lcr"),
+            ("NSFR", 2, "nsfr", "nsfr"),
+            ("EVE loss / Tier 1", 3, "risk", "eve_risk / tier1"),
+        )
+    )
+    return _df(
+        con,
+        f"""
+        SELECT metric, who,
+               max(value) FILTER (WHERE regime = 'basel') AS basel,
+               max(value) FILTER (WHERE regime = 'pra') AS pra,
+               max(value) FILTER (WHERE regime = 'pra')
+                 - max(value) FILTER (WHERE regime = 'basel') AS difference
+        FROM ({parts}) GROUP BY metric, ord, who
+        ORDER BY ord, who = '{GROUP}', who
+        """,
+    )
