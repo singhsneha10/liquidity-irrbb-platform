@@ -89,6 +89,20 @@ def test_irrbb_views_are_the_runs_results(board):
     assert set(nii["scenario"]) == {"parallel_up", "parallel_down"}
 
 
+def test_ladder_and_gap_are_the_runs_latest_rows_in_bucket_order(board):
+    assert data.ladder_whos(board.con)[-1] == data.GROUP
+    ladder = data.maturity_ladder(board.con, data.GROUP)
+    stored = _file(board, "metrics", "ladder")
+    stored = stored[(stored["level"] == "group") & (stored["date"] == stored["date"].max())]
+    assert list(ladder["bucket"]) == list(stored.sort_values("from_days")["bucket"])
+    assert ladder["net"].cumsum().round(6).tolist() == ladder["cumulative_net"].round(6).tolist()
+    assert set(ladder["currency"]) == {"GBP"}
+    entity, currency = data.gap_books(board.con, "pra").iloc[0]
+    gap = data.repricing_gap(board.con, "pra", entity, currency)
+    assert len(gap) == 19 and gap["midpoint_years"].is_monotonic_increasing
+    assert gap["gap"].cumsum().round(6).tolist() == gap["cumulative_gap"].round(6).tolist()
+
+
 def test_headline_and_changes_come_from_the_changes_stage(board):
     headline = data.group_headline(board.con, "basel").set_index("limit_name")
     assert list(headline.index) == ["eve_tier1", "lcr", "nsfr"]
@@ -147,7 +161,7 @@ def test_the_page_shows_every_tab_and_chart_without_errors(page, board):
     ]  # fmt: skip
     # executive: headroom + 3 group trends; then 3 limit bars, 2 trends, the outlier test,
     # 2 scenarios, drivers
-    assert len(_charts(page)) == 13
+    assert len(_charts(page)) == 15
     tiles = {metric.label: metric.value for metric in page.metric}
     counts = data.status_counts(board.con, "basel")
     assert tiles["Limits in breach"] == str(counts["breach"])
@@ -162,7 +176,7 @@ def test_switching_rulebook_and_entity_reruns_cleanly(page):
     assert not page.exception
     assert page.caption[0].value.startswith("UK PRA rules")
     page.selectbox(key="irrbb_who").set_value("BANK_UK").run()
-    assert not page.exception and len(_charts(page)) == 13
+    assert not page.exception and len(_charts(page)) == 15
 
 
 def test_without_a_published_run_the_page_says_so(tmp_path, monkeypatch):
@@ -199,7 +213,7 @@ def test_early_warning_view_is_the_runs_indicators(board):
 
 def test_rulebook_comparison_is_both_rulebooks_side_by_side(board):
     table = data.rulebook_comparison(board.con)
-    assert list(table["metric"].unique()) == ["LCR", "NSFR", "EVE loss / Tier 1"]
+    assert list(table["metric"].unique()) == ["LCR", "NSFR", "EVE loss / Tier 1 (proxy)"]
     assert len(table) == 3 * 4  # 3 metrics x (3 entities + the group)
     lcr = _file(board, "metrics", "lcr")
     latest = lcr[(lcr["date"] == lcr["date"].max()) & lcr["level"].isin(["entity", "group"])]
@@ -226,3 +240,42 @@ def test_the_switch_says_what_it_does_and_the_page_shows_the_rulebook(page, boar
     badges = [m.value for m in page.markdown if "-badge[" in m.value]  # st.badge is Markdown
     assert any("Rulebook: UK PRA" in b for b in badges)
     assert not any("Rulebook: Basel" in b for b in badges)
+
+
+def _captions(page) -> str:
+    return " ".join(c.value for c in page.caption)
+
+
+def test_the_page_explains_what_a_banker_would_question(page, board):
+    """Review fixes: Tier 1 is a proxy, the EVE limit is the supervisory test, how 'used' and
+    the retail outflow are measured, and why Basel shows no EVE gains."""
+    text = _captions(page)
+    assert "Tier 1 (proxy): the synthetic bank has no capital data" in text
+    assert "Used: for a floor (LCR, NSFR) the limit divided by the ratio" in text
+    assert "a rise counts as 0%" in text and "first day's FX rates" in text
+    from riskplatform.dashboard.app import outlier_phrase
+
+    outliers = data.eve_against_tier1(board.con, "basel")
+    flagged = list(outliers.loc[outliers["outlier"], "who"])
+    assert f"so {outlier_phrase(flagged)}: under the UK rules" in text
+    assert outlier_phrase(["BANK_UK"]) == "BANK_UK is also a supervisory outlier"
+    assert outlier_phrase(["BANK_UK", "GROUP"]) == "BANK_UK and GROUP are also supervisory outliers"
+    assert outlier_phrase(["A", "B", "C"]) == "A, B and C are also supervisory outliers"
+    table = next(df.value for df in page.dataframe if "type" in df.value.columns)  # Limits tab
+    assert set(table["type"]) == {"internal buffer above the regulatory minimum",
+                                  "equal to the supervisory outlier test"}  # fmt: skip
+    assert "Basel adds up currency losses only" in text
+    page.sidebar.radio(key="regime").set_value("pra").run()
+    assert "The UK counts gains at 50%" in _captions(page)
+
+
+def test_the_ladder_and_the_gap_follow_their_selectors(page):
+    assert page.selectbox(key="ladder_who").value == data.GROUP
+    ladder = next(c for c in page.caption if c.value.startswith("Bars: cash in minus cash out"))
+    assert "contractual view" in ladder.value and "equals the equity" in ladder.value
+    gap = next(c for c in page.caption if c.value.startswith("Bars: assets minus liabilities"))
+    assert "SRP31.111" in gap.value and "equity is excluded" in gap.value
+    page.selectbox(key="ladder_who").set_value("BANK_US").run()
+    book = page.selectbox(key="gap_book")
+    book.set_value(book.options[-1]).run()
+    assert not page.exception and len(_charts(page)) == 15

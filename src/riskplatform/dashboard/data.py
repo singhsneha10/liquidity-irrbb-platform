@@ -46,6 +46,11 @@ def _df(con: duckdb.DuckDBPyConnection, sql: str, *params) -> pd.DataFrame:
     return con.execute(sql, list(params)).df()
 
 
+def business_days(con: duckdb.DuckDBPyConnection) -> int:
+    """How many business days the run covers."""
+    return int(con.execute("SELECT count(DISTINCT date) FROM limits").fetchone()[0])
+
+
 def latest_date(con: duckdb.DuckDBPyConnection) -> pd.Timestamp:
     return pd.Timestamp(con.execute("SELECT max(date) FROM limits").fetchone()[0])
 
@@ -270,7 +275,7 @@ def rulebook_comparison(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         for name, order, view, value in (
             ("LCR", 1, "lcr", "lcr"),
             ("NSFR", 2, "nsfr", "nsfr"),
-            ("EVE loss / Tier 1", 3, "risk", "eve_risk / tier1"),
+            ("EVE loss / Tier 1 (proxy)", 3, "risk", "eve_risk / tier1"),
         )
     )
     return _df(
@@ -284,4 +289,54 @@ def rulebook_comparison(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         FROM ({parts}) GROUP BY metric, ord, who
         ORDER BY ord, who = '{GROUP}', who
         """,
+    )
+
+
+def ladder_whos(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """The entities and the group that have a maturity ladder (group last)."""
+    rows = con.execute(
+        f"SELECT DISTINCT {WHO} FROM ladder WHERE {LEVELS} ORDER BY who = '{GROUP}', who"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def maturity_ladder(con: duckdb.DuckDBPyConnection, who: str) -> pd.DataFrame:
+    """The contractual cash-flow ladder of one entity (or the group) on the latest date (GBP mn
+    for the group, the entity's own currency otherwise; the currency column says which)."""
+    return _df(
+        con,
+        f"""
+        SELECT bucket, from_days, currency, inflows, outflows, net, cumulative_net, contingent
+        FROM ladder WHERE {LEVELS} AND coalesce(entity, '{GROUP}') = ?
+          AND date = (SELECT max(date) FROM ladder)
+        ORDER BY from_days
+        """,
+        who,
+    )
+
+
+def gap_books(con: duckdb.DuckDBPyConnection, regime: str) -> pd.DataFrame:
+    """The entity-currency books that have a repricing gap, under one rulebook."""
+    return _df(
+        con,
+        "SELECT DISTINCT entity, currency FROM gap WHERE regime = ? ORDER BY entity, currency",
+        regime,
+    )
+
+
+def repricing_gap(
+    con: duckdb.DuckDBPyConnection, regime: str, entity: str, currency: str
+) -> pd.DataFrame:
+    """The repricing gap of one entity's book in one currency on the latest date."""
+    return _df(
+        con,
+        """
+        SELECT bucket, midpoint_years, assets, liabilities, gap, cumulative_gap
+        FROM gap WHERE regime = ? AND entity = ? AND currency = ?
+          AND date = (SELECT max(date) FROM gap)
+        ORDER BY midpoint_years
+        """,
+        regime,
+        entity,
+        currency,
     )

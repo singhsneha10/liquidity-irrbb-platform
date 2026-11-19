@@ -36,8 +36,15 @@ INDICATOR_ICON = {"ok": "✅ ok", "alert": "⚠️ alert", "not_enough_days": "�
 INDICATOR_NAMES = {"retail_outflow": "Retail outflow, 4 weeks", "break_even_run_off":
                    "Break-even run-off (LCR to 110%)"}  # fmt: skip
 REGIMES = {"basel": "Basel", "pra": "UK PRA"}
-LIMIT_NAMES = {"lcr": "LCR", "nsfr": "NSFR", "eve_tier1": "EVE loss / Tier 1"}
-TILE_NAMES = {**LIMIT_NAMES, "eve_tier1": "EVE / Tier 1"}  # short enough for a tile
+LIMIT_NAMES = {"lcr": "LCR", "nsfr": "NSFR", "eve_tier1": "EVE loss / Tier 1 (proxy)"}
+TILE_NAMES = {**LIMIT_NAMES, "eve_tier1": "EVE / Tier 1 (proxy)"}  # short enough for a tile
+# What each internal limit is, against the regulatory rules (config/limits.yaml, the why).
+LIMIT_TYPE = {
+    "lcr": "internal buffer above the regulatory minimum",
+    "nsfr": "internal buffer above the regulatory minimum",
+    "eve_tier1": "equal to the supervisory outlier test",
+}
+PROXY_NOTE = "Tier 1 (proxy): the synthetic bank has no capital data, so each entity's implied equity (assets minus liabilities) stands in for its Tier 1 capital (config/irrbb)."
 # The standardised shock scenarios in the order the rules list them (SRP31.90), not alphabetical.
 SCENARIOS = ["parallel_up", "parallel_down", "steepener", "flattener", "short_up", "short_down"]
 GRID = "#e5e4e0"
@@ -171,7 +178,7 @@ def outlier_chart(rows: pd.DataFrame) -> alt.LayerChart:
         .mark_bar(cornerRadiusEnd=4, height={"band": 0.6})
         .encode(
             y=alt.Y("who:N", title=None, sort=None),
-            x=alt.X("share:Q", axis=_axis(".0%", "worst EVE loss / Tier 1")),
+            x=alt.X("share:Q", axis=_axis(".0%", "worst EVE loss / Tier 1 (proxy)")),
             color=alt.Color(
                 "result:N",
                 scale=alt.Scale(
@@ -181,9 +188,9 @@ def outlier_chart(rows: pd.DataFrame) -> alt.LayerChart:
             ),
             tooltip=[
                 alt.Tooltip("who:N"),
-                alt.Tooltip("share:Q", format=".1%", title="EVE loss / Tier 1"),
+                alt.Tooltip("share:Q", format=".1%", title="EVE loss / Tier 1 (proxy)"),
                 alt.Tooltip("eve_risk:Q", format=",.1f", title="EVE loss (GBP mn)"),
-                alt.Tooltip("tier1:Q", format=",.1f", title="Tier 1 (GBP mn)"),
+                alt.Tooltip("tier1:Q", format=",.1f", title="Tier 1 proxy (GBP mn)"),
                 alt.Tooltip("worst_scenario:N"),
                 alt.Tooltip("result:N"),
             ],
@@ -388,7 +395,9 @@ def executive_tab(dashboard: data.Dashboard, con, regime: str) -> None:
         st.altair_chart(small_trend(nsfr, data.limit_value(con, "nsfr"), "Group NSFR", "floor"))
         eve = data.eve_share_trend(con, regime)
         st.altair_chart(
-            small_trend(eve, data.limit_value(con, "eve_tier1"), "Group EVE loss / Tier 1", "cap")
+            small_trend(
+                eve, data.limit_value(con, "eve_tier1"), "Group EVE loss / Tier 1 (proxy)", "cap"
+            )
         )
     rulebook_comparison_section(con)
     st.caption(
@@ -425,12 +434,23 @@ def rulebook_comparison_section(con) -> None:
     )
 
 
+def outlier_phrase(names: list[str]) -> str:
+    """'BANK_UK is also a supervisory outlier', or 'BANK_UK and GROUP are also supervisory
+    outliers' (the grammar follows the count)."""
+    if len(names) == 1:
+        return f"{names[0]} is also a supervisory outlier"
+    listed = ", ".join(names[:-1]) + f" and {names[-1]}"
+    return f"{listed} are also supervisory outliers"
+
+
 def limits_tab(dashboard: data.Dashboard, con, regime: str) -> None:
     levels = data.thresholds(dashboard)
     st.caption(
         f"Share of each internal limit used on the latest date (config/limits.yaml). Warning from "
         f"{levels['warning']:.0%}, breach from {levels['breach']:.0%} (the dashed lines). "
-        "These are the bank's own limits, not the regulatory minimums."
+        "These are the bank's own limits, not the regulatory minimums. Used: for a floor (LCR, "
+        "NSFR) the limit divided by the ratio, so a higher ratio uses less; for a cap (EVE "
+        "loss) the loss divided by the limit."
     )
     table = data.limit_status(con, regime)
     columns = st.columns(len(LIMIT_NAMES))
@@ -438,11 +458,23 @@ def limits_tab(dashboard: data.Dashboard, con, regime: str) -> None:
         column.markdown(f"**{title}**")
         column.altair_chart(limit_chart(table[table["limit_name"] == name], levels))
     shown = table.assign(
-        limit=table["limit_name"].map(LIMIT_NAMES), status=table["status"].map(STATUS_ICON)
+        limit=table["limit_name"].map(LIMIT_NAMES),
+        type=table["limit_name"].map(LIMIT_TYPE),
+        status=table["status"].map(STATUS_ICON),
     )
     st.dataframe(
         shown[
-            ["limit", "who", "kind", "actual", "limit_value", "utilisation", "status", "movement"]
+            [
+                "limit",
+                "type",
+                "who",
+                "kind",
+                "actual",
+                "limit_value",
+                "utilisation",
+                "status",
+                "movement",
+            ]
         ],
         hide_index=True,
         column_config={
@@ -451,6 +483,15 @@ def limits_tab(dashboard: data.Dashboard, con, regime: str) -> None:
             "utilisation": st.column_config.NumberColumn("used", format="percent"),
         },
     )
+    outliers = data.eve_against_tier1(con, regime)
+    flagged = list(outliers.loc[outliers["outlier"], "who"])
+    if flagged:
+        st.caption(
+            f"The EVE limit equals the supervisory outlier test (Basel SRP31.82; UK ICAA 9.4A), "
+            f"so {outlier_phrase(flagged)}: under the UK rules the PRA must be notified. The LCR and NSFR limits sit "
+            "above the 100% regulatory minimums, so breaching them is an internal matter."
+        )
+    st.caption(PROXY_NOTE)
     early_warning_table(con, regime)
 
 
@@ -461,7 +502,10 @@ def early_warning_table(con, regime: str) -> None:
     st.caption(
         "Alert when 4-week retail outflows exceed their threshold (about the system's 99th "
         "percentile), or when the run-off that would take the LCR to the 110% limit is below its "
-        "threshold. The bank's own judgement (config/early_warning.yaml)."
+        "threshold. The bank's own judgement (config/early_warning.yaml). Retail outflow: the "
+        "fall in retail deposits over the last 20 business days, all currencies at the first "
+        "day's FX rates (so exchange-rate moves are not counted as withdrawals); a rise counts "
+        "as 0%."
     )
     shown = table.assign(
         indicator=table["indicator"].map(INDICATOR_NAMES),
@@ -488,6 +532,85 @@ def liquidity_tab(con, regime: str) -> None:
         minimum = float(trend["minimum"].max())
         st.markdown(f"**{title}**")
         st.altair_chart(trend_chart(trend, minimum, data.limit_value(con, metric), title))
+    ladder_section(con)
+
+
+def bucket_chart(
+    rows: pd.DataFrame, value: str, cumulative: str, signs: tuple[str, str], unit: str
+) -> alt.LayerChart:
+    """Bars for each time bucket's net amount (coloured by sign, with a legend) and a line for
+    the cumulative position. Both are in the same unit, so one axis (never a second one)."""
+    order = list(rows["bucket"])
+    shown = rows.assign(side=rows[value].ge(0).map({True: signs[0], False: signs[1]}))
+    x = alt.X(
+        "bucket:N",
+        sort=order,
+        title=None,
+        axis=alt.Axis(labelAngle=-40, labelLimit=90, labelOverlap=False),
+    )
+    bars = (
+        alt.Chart(shown)
+        .mark_bar(cornerRadiusEnd=3)
+        .encode(
+            x=x,
+            y=alt.Y(f"{value}:Q", axis=_axis(",.0f", unit)),
+            color=alt.Color(
+                "side:N", scale=alt.Scale(domain=list(signs), range=SLOTS[:2]), title=None
+            ),
+            tooltip=[alt.Tooltip("bucket:N"), alt.Tooltip(f"{value}:Q", format="+,.0f",
+                                                          title="in the bucket"),
+                     alt.Tooltip(f"{cumulative}:Q", format="+,.0f", title="cumulative")],
+        )
+    )  # fmt: skip
+    line = (
+        alt.Chart(shown)
+        .mark_line(color="#52514e", strokeWidth=2, point=alt.OverlayMarkDef(size=40, filled=True, color="#52514e"))
+        .encode(x=x, y=f"{cumulative}:Q", tooltip=[alt.Tooltip(f"{cumulative}:Q", format="+,.0f",
+                                                                title="cumulative")])
+    )  # fmt: skip
+    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#a3a29c").encode(y="y:Q")
+    return (bars + zero + line).properties(height=300)
+
+
+def ladder_section(con) -> None:
+    """The contractual maturity ladder of one entity or the group."""
+    st.markdown("**Maturity ladder** (contractual cash flows on the latest day)")
+    whos = data.ladder_whos(con)  # the group comes last
+    who = st.selectbox("Entity or group", whos, index=len(whos) - 1, key="ladder_who")
+    rows = data.maturity_ladder(con, who)
+    unit = f"{rows['currency'].iloc[0]} mn"
+    st.altair_chart(bucket_chart(rows, "net", "cumulative_net", ("inflows exceed outflows",
+                                                                 "outflows exceed inflows"),
+                                 unit))  # fmt: skip
+    st.caption(
+        "Bars: cash in minus cash out in each bucket; line: the cumulative position. This is "
+        "the contractual view: each position flows when it legally matures, so retail deposits, "
+        "repayable on demand, sit in the overnight bucket. How much of them would really leave "
+        "under stress is the LCR's job (its run-off rates), not the ladder's. Undrawn "
+        f"commitments, a contingent outflow, are shown apart: {rows['contingent'].iloc[0]:,.0f} "
+        f"{unit}. The final cumulative position equals the equity."
+    )
+
+
+def gap_section(con, regime: str) -> None:
+    """The repricing gap of one entity's book in one currency."""
+    books = data.gap_books(con, regime)
+    labels = [f"{e} {c}" for e, c in books.itertuples(index=False)]
+    choice = st.selectbox("Book (entity and currency)", labels, key="gap_book")
+    entity, currency = choice.split(" ")
+    rows = data.repricing_gap(con, regime, entity, currency)
+    st.markdown(f"**Repricing gap** ({choice}, latest day, {currency} mn)")
+    st.altair_chart(bucket_chart(rows, "gap", "cumulative_gap", ("more assets reprice",
+                                                                 "more liabilities reprice"),
+                                 f"{currency} mn"))  # fmt: skip
+    st.caption(
+        "Bars: assets minus liabilities that reprice in each of the 19 IRRBB time buckets "
+        "(SRP31.96); line: the cumulative gap. A positive gap means more assets than "
+        "liabilities reset their rate then, so income rises if rates rise. This is the "
+        "behavioural view used for EVE: non-maturity deposits split into a core part, "
+        "repricing at its behavioural maturity, and a non-core part repricing overnight "
+        "(SRP31.111); swaps count as two legs; equity is excluded."
+    )
 
 
 def irrbb_tab(con, regime: str) -> None:
@@ -500,8 +623,17 @@ def irrbb_tab(con, regime: str) -> None:
     nii = data.nii_by_scenario(con, regime)
     left.markdown("**EVE loss by scenario** (GBP mn, positive = a loss)")
     left.altair_chart(scenario_chart(eve[eve["who"] == who], "eve_loss", "EVE loss (GBP mn)"))
+    left.caption(
+        "Basel adds up currency losses only (SRP31.129(5)): a scenario in which every currency "
+        "gains shows 0, not a gain."
+        if regime == "basel"
+        else "The UK counts gains at 50% against losses across currencies (SS31/15 2.9B(iv)), "
+        "so a scenario can show a net gain (a negative loss)."
+    )
     right.markdown("**Change in NII by scenario** (GBP mn, next 12 months)")
     right.altair_chart(scenario_chart(nii[nii["who"] == who], "delta_nii", "ΔNII (GBP mn)"))
+    st.caption(PROXY_NOTE)
+    gap_section(con, regime)
 
 
 def changes_tab(con, regime: str) -> None:
@@ -596,8 +728,10 @@ def main() -> None:
         st.info(
             f"Demo: a synthetic bank (3 entities, 3 currencies), run through the platform's full "
             f"pipeline on this server at {demo.built_at:%d %b %Y %H:%M} UTC. Every figure is the "
-            "pipeline's own output; no real bank's data is shown. Methodology, validation "
-            "and source code: the project's README."
+            "pipeline's own output; no real bank's data is shown. The series is fixed: "
+            f"{data.business_days(con)} business days to {data.latest_date(con):%d %b %Y}, "
+            "whatever today's date. Methodology, validation and source code: the project's "
+            "README."
         )
     st.badge(f"Rulebook: {REGIMES[regime]}", color="blue", icon=":material/gavel:")
     st.caption(f"{REGIMES[regime]} rules, as of {data.latest_date(con):%d %b %Y}")

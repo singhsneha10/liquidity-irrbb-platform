@@ -124,7 +124,10 @@ drivers the summary and email list is set in `config/reporting.yaml` (`top_drive
 
 A Streamlit page over the latest good run.
 - **Header tiles:** limits in breach and at warning, plus the group's LCR, NSFR and EVE / Tier 1
-  with the change in bp.
+  (proxy) with the change in bp.
+- **Tier 1 (proxy):** the synthetic bank has no capital data, so each entity's implied equity
+  (assets minus liabilities) stands in for Tier 1. Every label says "(proxy)" and a footnote
+  explains it, on the page and in the PDF.
 - **Tabs:**
   - *Executive summary* (the landing tab, `dashboard/executive.py`): an overall status and three
     cards (liquidity, interest rate risk, early warnings), each red, amber or green with the
@@ -133,9 +136,19 @@ A Streamlit page over the latest good run.
     group trends against the limits. Rules: red for a limit breach, a missed regulatory minimum
     or an IRRBB outlier; amber for a limit at warning or an early-warning indicator in alert
     (early warnings never turn a card red on their own); overall is the worst card.
-  - *Limits:* utilisation per entity and group, against the 90% and 100% lines.
-  - *Liquidity:* LCR and NSFR trends against the minimum and the internal limit.
-  - *IRRBB:* EVE / Tier 1 against the 15% test, and EVE loss and ΔNII by scenario.
+  - *Limits:* utilisation per entity and group, against the 90% and 100% lines. A *type*
+    column says what each limit is against the rules: the LCR and NSFR limits are internal
+    buffers above the 100% minimums; the EVE limit equals the supervisory outlier test, so an
+    EVE breach is also a supervisory outlier (named in a caption; under UK rules the PRA must be
+    notified). "Used" is limit ÷ ratio for a floor and loss ÷ limit for a cap.
+  - *Liquidity:* LCR and NSFR trends against the minimum and the internal limit, then the
+    **maturity ladder** of the entity or group chosen (latest day, contractual): bars for each
+    bucket's net cash flow, coloured by sign, and a line for the cumulative position, which ends
+    at equity. Undrawn commitments are given apart as a contingent outflow.
+  - *IRRBB:* EVE / Tier 1 (proxy) against the 15% test, and EVE loss and ΔNII by scenario, then
+    the **repricing gap** of one entity-currency book over the 19 IRRBB buckets (behavioural:
+    core and non-core deposits, swap legs; equity excluded), same form as the ladder. A caption
+    says how each rulebook adds up EVE across currencies (Basel: losses only; UK: gains at 50%).
   - *Since the day before.*
   - *Data quality:* rows, quarantine, file checks.
 - **Sidebar:** switches between Basel and UK PRA.
@@ -227,6 +240,10 @@ judgement, like the limits.
 8. `data/extracts/latest/` is replaced by a copy, not atomically (Windows can't swap folders in
    one step).
 9. The PDF uses the standard Helvetica font, so the text sticks to plain characters.
+11. Tier 1 is a proxy (implied equity), labelled as such everywhere it is shown.
+12. The ladder and gap charts show the latest day only; there's no history view of them.
+13. The demo series is fixed (60 business days to 23 Oct 2026), so the dashboard's "as of" date
+    is not today's date; the demo notice says so.
 
 ## How it was verified
 

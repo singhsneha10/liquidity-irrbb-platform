@@ -24,7 +24,7 @@ from riskplatform.dashboard import data
 
 GREEN, AMBER, RED = "green", "amber", "red"
 ORDER = [GREEN, AMBER, RED]
-LIMIT_LABEL = {"lcr": "LCR", "nsfr": "NSFR", "eve_tier1": "EVE loss / Tier 1"}
+LIMIT_LABEL = {"lcr": "LCR", "nsfr": "NSFR", "eve_tier1": "EVE loss / Tier 1 (proxy)"}
 LIQUIDITY, RATES = ("lcr", "nsfr"), ("eve_tier1",)
 
 
@@ -74,7 +74,7 @@ def rates_card(limits: pd.DataFrame, outliers: pd.DataFrame) -> Card:
     status = RED if flagged else _from_limits(rows)
     worst = rows.nlargest(1, "actual").iloc[0]
     reason = (
-        f"Highest EVE loss {_pct(worst['actual'])} of Tier 1 ({worst['who']}) against a "
+        f"Highest EVE loss {_pct(worst['actual'])} of Tier 1 (proxy) ({worst['who']}) against a "
         f"{_limit(worst['limit_value'])} limit"
     )
     if flagged:
