@@ -325,6 +325,11 @@ data: hand-worked examples written before the code, and proofs against published
   demo notice does not name the GitHub account (the author decides whether to add the link).
   Tests: `tests/test_demo.py` (full demo build, stopped-run message, the entry point via
   AppTest, requirements.txt); the entry-point test restores the environment it changes.
+  **Deployed 2026-11-19** by the author from `main` (PR merged, CI green):
+  https://liquidity-irrbb-monitor.streamlit.app/ (public; Streamlit's frame shows Fork, a GitHub
+  link and the owner's avatar, standard for public apps). Note: an anonymous curl gets a 303 to
+  `/-/login`; that is Streamlit's cookie step for every app (a known public app does the same),
+  not a login wall: check with a real browser. Redeploys follow pushes to `main`.
 
 ## Status
 | Phase | Status |
@@ -339,7 +344,7 @@ data: hand-worked examples written before the code, and proofs against published
 | 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). **Deployed 2026-11-16** from the personal PC: billing alarm, platform (27 resources), image `0.1.0`, one manual Fargate run (1 min 36 s, exit 2, 191 files to S3, limit email received). Daily schedule still **off**. |
 | 8. Alerts and dashboard | Done: limits config + utilisation (8.1), limits stage + S3 + query view + Dagster asset (8.2), SNS limit alert email (8.3), what changed since yesterday (8.4), Streamlit dashboard (8.5), Tableau CSV extracts (8.6), daily PDF report (8.7), README + `docs/reporting.md` + this file (8.8). 597 tests, 2 to 6 minutes (varies from run to run; not yet profiled). |
 | 9. Model validation | Done: scope and criteria before results (9.1), Fed H.8 deposits from FRED (9.2), planted deposit-run stress episode (9.3), backtest T1 + detection check T2 (9.4), LCR sensitivity T3 + benchmark T4 (9.5), `riskplatform-validate` and report consistency tests (9.6), conclusion, recommendations and SS1/23 / SR 26-2 framing (9.7), this file (9.8). R1 done: the 1985 break confirmed and excluded, overall AMBER (was RED). |
-| 10. Public deploy | Code done 2026-11-19 (option A: Streamlit Community Cloud, demo built at start-up; no AWS, no secrets). **Deploy pending: the author signs in at share.streamlit.io and creates the app** (README, "Public demo dashboard"). |
+| 10. Public deploy | **Done 2026-11-19: https://liquidity-irrbb-monitor.streamlit.app/** (option A: Streamlit Community Cloud from `main`, demo built at start-up; no AWS, no secrets). Checked anonymously: public, renders, no errors, numbers match the default run. |
 
 ## Deployment checklist (personal PC; decided 2026-11-16)
 **All Terraform work happens on the personal PC only.** Its `terraform.tfstate` files are the

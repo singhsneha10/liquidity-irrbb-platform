@@ -118,6 +118,9 @@ pytest; ruff check .; ruff format --check .
 
 ## Public demo dashboard
 
+**Live: https://liquidity-irrbb-monitor.streamlit.app/** (if it has been idle, the first visit
+wakes it and rebuilds the demo, about a minute).
+
 `streamlit_app.py` is a public demo: it needs no AWS access and no secrets. On first load it
 builds the default synthetic bank with the full pipeline on the server (about a minute), then
 shows that run. Every figure is the pipeline's own output, and the page says so.
