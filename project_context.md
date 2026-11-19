@@ -349,6 +349,18 @@ data: hand-worked examples written before the code, and proofs against published
   <name>" badge under the title, a help text on the switch with the largest difference
   computed from the data, and a "Basel vs UK PRA" table on the executive summary
   (`data.rulebook_comparison`, both rulebooks side by side with UK minus Basel in points).
+- **Dashboard review fixes (2026-11-19, from a five-point review the author pasted; all five
+  checked as accurate):** (1) maturity ladder (Liquidity tab, entity or group, contractual) and
+  repricing gap (IRRBB tab, entity-currency book, 19 buckets, behavioural) added as bars by sign
+  plus a cumulative line (`data.ladder_whos/maturity_ladder/gap_books/repricing_gap`,
+  `app.bucket_chart`); blue/orange for the sign, not red, so a shortfall is not read as a breach.
+  (2) "Tier 1" relabelled "Tier 1 (proxy)" everywhere (dashboard, executive cards, PDF) with a
+  footnote: implied equity stands in. (3) Limits table gets a *type* column (LCR/NSFR internal
+  buffer above the minimum; EVE equal to the supervisory outlier test) and a caption naming the
+  entities that are therefore also outliers. (4) Captions: Basel EVE losses only vs UK gains at
+  50%; how "used" works for a floor vs a cap; the retail outflow measure (constant FX, a rise
+  counts 0%); the demo series is fixed (60 business days to 23 Oct 2026). (5) Cold start (the
+  free tier sleeps after 12 h idle): the author's action, open the app just before sharing.
 
 ## Status
 | Phase | Status |

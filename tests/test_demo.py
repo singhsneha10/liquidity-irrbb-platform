@@ -55,6 +55,7 @@ def test_the_cloud_entry_point_shows_the_demo(monkeypatch, clean_environment):
     page = AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=300).run()
     assert not page.exception
     assert "Demo: a synthetic bank" in page.info[0].value
+    assert "The series is fixed: 60 business days to 23 Oct 2026" in page.info[0].value
     assert "demo, built on this server" in " ".join(c.value for c in page.sidebar.caption)
     assert page.tabs[0].label == "Executive summary"
     assert page.metric[0].label == "Limits in breach"

@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 REPORT_FILE = "daily_report.pdf"
 REGIMES = {"basel": "Basel", "pra": "UK PRA"}
-LIMIT_NAMES = {"lcr": "LCR", "nsfr": "NSFR", "eve_tier1": "EVE loss / Tier 1"}
+LIMIT_NAMES = {"lcr": "LCR", "nsfr": "NSFR", "eve_tier1": "EVE loss / Tier 1 (proxy)"}
 TOP_DRIVERS = 5  # a page, not a database: the full list is in the extracts and the dashboard
 
 # The same colours as the dashboard (the reference chart palette): entity slots, neutral group,
@@ -300,7 +300,7 @@ def liquidity_section(con) -> list:
 
 
 def irrbb_section(con) -> list:
-    rows = [["Rulebook", "Who", "EVE loss / Tier 1", "Test", "Worst scenario", "Result",
+    rows = [["Rulebook", "Who", "EVE loss / Tier 1 (proxy)", "Test", "Worst scenario", "Result",
              "NII +200bp (GBP mn)", "NII -200bp"]]  # fmt: skip
     for regime, name in REGIMES.items():
         risk = data.eve_against_tier1(con, regime)
@@ -320,7 +320,8 @@ def irrbb_section(con) -> list:
     _status_cells(table, rows, column=5)
     note = Paragraph(
         "Outlier test: the worst EVE loss over the six standardised shocks against 15% of "
-        "Tier 1 (Basel SRP31.82-31.83; UK ICAA 9.4A, SS31/15 2.7B). NII: the change in net interest income over the next "
+        "Tier 1 (here a proxy: the implied equity of each entity, assets minus liabilities) "
+        "(Basel SRP31.82-31.83; UK ICAA 9.4A, SS31/15 2.7B). NII: the change in net interest income over the next "
         "12 months under the parallel shocks, constant balance sheet.",
         STYLES["small"],
     )
