@@ -390,11 +390,38 @@ def executive_tab(dashboard: data.Dashboard, con, regime: str) -> None:
         st.altair_chart(
             small_trend(eve, data.limit_value(con, "eve_tier1"), "Group EVE loss / Tier 1", "cap")
         )
+    rulebook_comparison_section(con)
     st.caption(
         "Status: red for a limit breach, a missed regulatory minimum or an IRRBB outlier; amber "
         "for a limit at warning or an early-warning indicator in alert. Every sentence is built "
         "from the figures in the other tabs. The model validation of the LCR run-off "
         "assumptions is in the project's validation report."
+    )
+
+
+def _points(value: float) -> str:
+    """A difference in percentage points, e.g. +1.4 pts; 0.0 pts (not -0.0) when it rounds away."""
+    rounded = round(value * 100, 1)
+    return "0.0 pts" if rounded == 0 else f"{rounded:+.1f} pts"
+
+
+def rulebook_comparison_section(con) -> None:
+    """Both rulebooks side by side, whatever the sidebar shows (the differences are small)."""
+    table = data.rulebook_comparison(con)
+    st.markdown("**Basel vs UK PRA** (latest day; the sidebar switches the rest of the page)")
+    shown = table.assign(
+        basel=table["basel"].map(lambda v: f"{v:.1%}"),
+        pra=table["pra"].map(lambda v: f"{v:.1%}"),
+        difference=table["difference"].map(_points),
+    ).rename(columns={"basel": "Basel", "pra": "UK PRA", "difference": "UK minus Basel"})
+    st.dataframe(shown, hide_index=True)
+    st.caption(
+        "The two rulebooks share the run-off rates, the shock sizes and the limits, so results "
+        "differ only where a treatment differs. The UK counts covered bonds as Level 1 HQLA "
+        "(Basel: Level 2A) and gives government and covered bonds lower NSFR funding factors, "
+        "so UK LCR and NSFR are a little higher. For IRRBB, the UK floors shocked rates (-100 bp "
+        "rising to 0% at 20 years) and lets gains offset losses at 50% across currencies, so EVE "
+        "losses can move either way. Details: the liquidity and IRRBB methodology documents."
     )
 
 
@@ -546,9 +573,19 @@ def main() -> None:
         st.stop()
     con = dashboard.con.cursor()  # one cursor per page view: sessions never share a cursor
 
+    largest = data.rulebook_comparison(con)["difference"].abs().max()
     with st.sidebar:
         regime = st.radio(
-            "Rulebook", list(REGIMES), format_func=REGIMES.get, key="regime", horizontal=True
+            "Rulebook",
+            list(REGIMES),
+            format_func=REGIMES.get,
+            key="regime",
+            horizontal=True,
+            help=(
+                "Every figure on the page follows the rulebook chosen here. The two differ only "
+                f"in a few treatments, so for this bank results move by at most {largest * 100:.1f} "
+                "percentage points. The executive summary compares both side by side."
+            ),
         )
         where = "demo, built on this server" if demo else dashboard.source
         st.caption(f"Run {dashboard.run_id} ({where})")
@@ -562,6 +599,7 @@ def main() -> None:
             "pipeline's own output; no real bank's data is shown. Methodology, validation "
             "and source code: the project's README."
         )
+    st.badge(f"Rulebook: {REGIMES[regime]}", color="blue", icon=":material/gavel:")
     st.caption(f"{REGIMES[regime]} rules, as of {data.latest_date(con):%d %b %Y}")
     headline(con, regime)
     names = ["Executive summary", "Limits", "Liquidity", "IRRBB", "Since the day before"]

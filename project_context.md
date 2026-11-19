@@ -342,6 +342,13 @@ data: hand-worked examples written before the code, and proofs against published
   (the demo cannot recompute it; a typed one would go stale), so the footer points to the
   report. Screenshot-checked; the trend shows the group's EVE loss was above its 15% cap for
   most of Aug-Sep 2026 in the synthetic run.
+- **Rulebook switch (2026-11-19, author's report "nothing changes"):** it did work (group LCR
+  186.6% -> 188.0%), but Basel and UK PRA differ by at most 2.4 points for this bank (only
+  covered bonds, NSFR factors, the IRRBB floor and 50% currency offsetting differ; run-off
+  rates, shocks and limits are the same), so the page looked unchanged. Fix: a "Rulebook:
+  <name>" badge under the title, a help text on the switch with the largest difference
+  computed from the data, and a "Basel vs UK PRA" table on the executive summary
+  (`data.rulebook_comparison`, both rulebooks side by side with UK minus Basel in points).
 
 ## Status
 | Phase | Status |

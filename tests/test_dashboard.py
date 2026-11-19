@@ -195,3 +195,34 @@ def test_early_warning_view_is_the_runs_indicators(board):
         if (expected["status"] == "alert").any():
             assert shown["status"].iloc[0] == "alert"  # alerts listed first
     assert len(data.early_warning_alerts(board.con)) == int((rows["status"] == "alert").sum())
+
+
+def test_rulebook_comparison_is_both_rulebooks_side_by_side(board):
+    table = data.rulebook_comparison(board.con)
+    assert list(table["metric"].unique()) == ["LCR", "NSFR", "EVE loss / Tier 1"]
+    assert len(table) == 3 * 4  # 3 metrics x (3 entities + the group)
+    lcr = _file(board, "metrics", "lcr")
+    latest = lcr[(lcr["date"] == lcr["date"].max()) & lcr["level"].isin(["entity", "group"])]
+    for regime, column in (("basel", "basel"), ("pra", "pra")):
+        expected = sorted(latest.loc[latest["regime"] == regime, "lcr"])
+        assert sorted(table.loc[table["metric"] == "LCR", column]) == pytest.approx(expected)
+    assert (table["difference"] == table["pra"] - table["basel"]).all()
+
+
+def test_points_never_show_minus_zero():
+    from riskplatform.dashboard.app import _points
+
+    assert _points(0.0141) == "+1.4 pts"
+    assert _points(-0.0097) == "-1.0 pts"
+    assert _points(-0.00001) == "0.0 pts"
+
+
+def test_the_switch_says_what_it_does_and_the_page_shows_the_rulebook(page, board):
+    largest = data.rulebook_comparison(board.con)["difference"].abs().max()
+    radio = page.sidebar.radio(key="regime")
+    assert f"at most {largest * 100:.1f} percentage points" in radio.help
+    radio.set_value("pra").run()
+    assert not page.exception
+    badges = [m.value for m in page.markdown if "-badge[" in m.value]  # st.badge is Markdown
+    assert any("Rulebook: UK PRA" in b for b in badges)
+    assert not any("Rulebook: Basel" in b for b in badges)
