@@ -15,6 +15,7 @@ Labelled simplification: one light theme (.streamlit/config.toml), so one set of
 """
 
 import os
+import tempfile
 from pathlib import Path
 
 import altair as alt
@@ -23,6 +24,7 @@ import streamlit as st
 
 from riskplatform.config import load_storage_config
 from riskplatform.dashboard import data
+from riskplatform.dashboard.demo import DEMO_ENV, DemoBuildError, DemoRun, build_demo
 from riskplatform.query import QueryInputError
 
 DATA_ENV = "RISKPLATFORM_DATA_DIR"
@@ -232,6 +234,15 @@ def driver_chart(drivers: pd.DataFrame) -> alt.Chart:
 # --- The page -----------------------------------------------------------------------------------
 
 
+@st.cache_resource(
+    show_spinner="Building the synthetic bank with the full pipeline (about a minute, once)..."
+)
+def _demo() -> DemoRun:
+    """The demo run (riskplatform.dashboard.demo), built once per server start and shared."""
+    folder = tempfile.mkdtemp(prefix="riskplatform-demo-")
+    return build_demo(Path.cwd(), folder)  # Streamlit runs from the repository root
+
+
 @st.cache_resource(ttl=300, show_spinner="Opening the latest run...")
 def _open(source: str, data_dir: str) -> data.Dashboard:
     """One connection per source and folder, reopened every 5 minutes to pick up a new run."""
@@ -394,9 +405,17 @@ def quality_tab(dashboard: data.Dashboard, con) -> None:
 def main() -> None:
     st.set_page_config(page_title="Risk monitor", page_icon="📊", layout="wide")
     storage = load_storage_config(Path("config/storage.yaml"))
-    data_dir = os.environ.get(DATA_ENV, "data")
+    source, data_dir, demo = storage.backend, os.environ.get(DATA_ENV, "data"), None
+    if os.environ.get(DEMO_ENV) == "1":
+        try:
+            demo = _demo()
+        except DemoBuildError as error:
+            st.title("Liquidity and IRRBB monitor")
+            st.error(f"The demo could not be built: {error}")
+            st.stop()
+        source, data_dir = "local", str(demo.data_dir)
     try:
-        dashboard = _open(storage.backend, data_dir)
+        dashboard = _open(source, data_dir)
     except QueryInputError as error:
         st.title("Liquidity and IRRBB monitor")
         st.error(f"No published run to show: {error}")
@@ -407,10 +426,18 @@ def main() -> None:
         regime = st.radio(
             "Rulebook", list(REGIMES), format_func=REGIMES.get, key="regime", horizontal=True
         )
-        st.caption(f"Run {dashboard.run_id} ({dashboard.source})")
+        where = "demo, built on this server" if demo else dashboard.source
+        st.caption(f"Run {dashboard.run_id} ({where})")
         st.caption("All positions are synthetic.")
 
     st.title("Liquidity and IRRBB monitor")
+    if demo:
+        st.info(
+            f"Demo: a synthetic bank (3 entities, 3 currencies), run through the platform's full "
+            f"pipeline on this server at {demo.built_at:%d %b %Y %H:%M} UTC. Every figure is the "
+            "pipeline's own output; no real bank's data is shown. Methodology, validation "
+            "and source code: the project's README."
+        )
     st.caption(f"{REGIMES[regime]} rules, as of {data.latest_date(con):%d %b %Y}")
     headline(con, regime)
     tabs = st.tabs(["Limits", "Liquidity", "IRRBB", "Since the day before", "Data quality"])
