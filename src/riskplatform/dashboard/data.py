@@ -245,3 +245,16 @@ def early_warning_alerts(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         ORDER BY indicator, value, who, regime
         """,
     )
+
+
+def eve_share_trend(con: duckdb.DuckDBPyConnection, regime: str) -> pd.DataFrame:
+    """The worst EVE loss as a share of Tier 1, per entity and the group, over every date."""
+    return _df(
+        con,
+        f"""
+        SELECT date, {WHO}, eve_risk / tier1 AS value, threshold / tier1 AS test
+        FROM risk WHERE {LEVELS} AND regime = ?
+        ORDER BY date, who
+        """,
+        regime,
+    )

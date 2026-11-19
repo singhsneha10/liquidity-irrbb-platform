@@ -331,6 +331,18 @@ data: hand-worked examples written before the code, and proofs against published
   `/-/login`; that is Streamlit's cookie step for every app (a known public app does the same),
   not a login wall: check with a real browser. Redeploys follow pushes to `main`.
 
+- **Executive summary tab (2026-11-19, after Phase 10; author chose "new landing tab"):**
+  `dashboard/executive.py` (no Streamlit; tested) builds three RAG cards (liquidity, interest
+  rate risk, early warnings; the word always shown), an overall status (worst card), up to five
+  key messages written by code from the figures (breaches first, then warnings, liquidity,
+  early warnings, changes), headroom per limit at the tightest entity, and group trends (new
+  `data.eve_share_trend`). Rules: red = limit breach, missed regulatory minimum or IRRBB
+  outlier; amber = limit at warning or early-warning alert (never red alone). It is the first
+  tab of the dashboard and the public demo. Not shown on purpose: the model validation rating
+  (the demo cannot recompute it; a typed one would go stale), so the footer points to the
+  report. Screenshot-checked; the trend shows the group's EVE loss was above its 15% cap for
+  most of Aug-Sep 2026 in the synthetic run.
+
 ## Status
 | Phase | Status |
 |---|---|

@@ -126,6 +126,13 @@ A Streamlit page over the latest good run.
 - **Header tiles:** limits in breach and at warning, plus the group's LCR, NSFR and EVE / Tier 1
   with the change in bp.
 - **Tabs:**
+  - *Executive summary* (the landing tab, `dashboard/executive.py`): an overall status and three
+    cards (liquidity, interest rate risk, early warnings), each red, amber or green with the
+    word shown and a one-line reason. Up to five key messages, built by code from the figures
+    (no generated text). The headroom to each internal limit at the tightest entity, and 60-day
+    group trends against the limits. Rules: red for a limit breach, a missed regulatory minimum
+    or an IRRBB outlier; amber for a limit at warning or an early-warning indicator in alert
+    (early warnings never turn a card red on their own); overall is the worst card.
   - *Limits:* utilisation per entity and group, against the 90% and 100% lines.
   - *Liquidity:* LCR and NSFR trends against the minimum and the internal limit.
   - *IRRBB:* EVE / Tier 1 against the 15% test, and EVE loss and ΔNII by scenario.
