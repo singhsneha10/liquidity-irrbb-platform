@@ -23,7 +23,7 @@ import pandas as pd
 import streamlit as st
 
 from riskplatform.config import load_storage_config
-from riskplatform.dashboard import data
+from riskplatform.dashboard import data, executive
 from riskplatform.dashboard.demo import DEMO_ENV, DemoBuildError, DemoRun, build_demo
 from riskplatform.query import QueryInputError
 
@@ -41,6 +41,7 @@ TILE_NAMES = {**LIMIT_NAMES, "eve_tier1": "EVE / Tier 1"}  # short enough for a 
 # The standardised shock scenarios in the order the rules list them (SRP31.90), not alphabetical.
 SCENARIOS = ["parallel_up", "parallel_down", "steepener", "flattener", "short_up", "short_down"]
 GRID = "#e5e4e0"
+NEWLINE = chr(10)  # joins the key messages into one Markdown list
 
 
 def entity_colours(names) -> alt.Scale:
@@ -274,6 +275,129 @@ def headline(con, regime: str) -> None:
         )
 
 
+BADGE = {
+    "green": ("GREEN", "green", ":material/check_circle:"),
+    "amber": ("AMBER", "orange", ":material/warning:"),
+    "red": ("RED", "red", ":material/error:"),
+}  # the word is always shown with the colour
+
+
+def _badge(status: str) -> None:
+    word, colour, icon = BADGE[status]
+    st.badge(word, color=colour, icon=icon)
+
+
+def headroom_chart(rows: pd.DataFrame, levels: dict[str, float]) -> alt.LayerChart:
+    """Per limit, the tightest entity or group: the share of the limit used."""
+    shown = rows.assign(
+        item=rows["label"] + " (" + rows["who"] + ")", used=rows["utilisation"].clip(upper=2.0)
+    )
+    top = max(1.2, float(shown["used"].max()) * 1.1)
+    bars = (
+        alt.Chart(shown)
+        .mark_bar(cornerRadiusEnd=4, height={"band": 0.6})
+        .encode(
+            y=alt.Y("item:N", title=None, sort=None, axis=alt.Axis(labelLimit=260)),
+            x=alt.X(
+                "used:Q", scale=alt.Scale(domain=[0, top]), axis=_axis(".0%", "of the limit used")
+            ),
+            color=alt.Color("status:N", scale=status_scale(), legend=None),
+            tooltip=[
+                alt.Tooltip("item:N", title="limit"),
+                alt.Tooltip("utilisation:Q", format=".1%", title="used"),
+                alt.Tooltip("actual:Q", format=".1%"),
+                alt.Tooltip("limit_value:Q", format=".0%", title="limit"),
+                alt.Tooltip("status:N"),
+            ],
+        )
+    )
+    labels = bars.mark_text(align="left", dx=4).encode(
+        text=alt.Text("utilisation:Q", format=".0%"), color=alt.value("#0b0b0b")
+    )
+    lines = pd.DataFrame(
+        [{"at": levels["warning"], "line": "warning"}, {"at": levels["breach"], "line": "breach"}]
+    )
+    rules = (
+        alt.Chart(lines)
+        .mark_rule(strokeDash=[4, 3], strokeWidth=1.5, color="#52514e")
+        .encode(x="at:Q", tooltip=[alt.Tooltip("line:N"), alt.Tooltip("at:Q", format=".0%")])
+    )
+    return (bars + labels + rules).properties(height=150)
+
+
+def small_trend(trend: pd.DataFrame, limit: float, title: str, kind: str) -> alt.LayerChart:
+    """The group's ratio over the run, with its internal limit (one series: one colour)."""
+    group = trend[trend["who"] == data.GROUP]
+    line = (
+        alt.Chart(group)
+        .mark_line(strokeWidth=2, color=SLOTS[0])
+        .encode(
+            x=alt.X(
+                "date:T",
+                axis=alt.Axis(
+                    format="%d %b",
+                    title=None,
+                    tickCount=5,
+                    gridColor=GRID,
+                    domain=False,
+                    tickColor=GRID,
+                ),
+            ),
+            y=alt.Y("value:Q", axis=_axis(".0%", None), scale=alt.Scale(zero=False)),
+            tooltip=[alt.Tooltip("date:T"), alt.Tooltip("value:Q", format=".1%", title=title)],
+        )
+    )
+    word = "floor" if kind == "floor" else "cap"
+    note = f"internal limit {limit:.0%} ({word})"
+    rule = (
+        alt.Chart(pd.DataFrame({"at": [limit], "line": [note]}))
+        .mark_rule(strokeDash=[5, 4], strokeWidth=1.5, color="#52514e")
+        .encode(y="at:Q", tooltip=["line:N"])
+    )
+    text = rule.mark_text(align="left", baseline="bottom", dx=4, dy=-2, color="#52514e").encode(
+        x=alt.value(0), text="line:N"
+    )
+    return (line + rule + text).properties(height=130, title=alt.TitleParams(title, fontSize=12))
+
+
+def executive_tab(dashboard: data.Dashboard, con, regime: str) -> None:
+    """The one-page view for a CRO or treasurer (riskplatform.dashboard.executive)."""
+    card_list = executive.cards(con, regime)
+    status = executive.overall(card_list)
+    left, right = st.columns([1, 5], vertical_alignment="center")
+    with left:
+        st.markdown("**Overall status**")
+    with right:
+        _badge(status)
+    columns = st.columns(len(card_list))
+    for column, card in zip(columns, card_list, strict=True):
+        with column.container(border=True):
+            st.markdown(f"**{card.area}**")
+            _badge(card.status)
+            st.caption(card.reason)
+    st.markdown("**Key messages**")
+    st.markdown(NEWLINE.join(f"- {line}" for line in executive.key_messages(con, regime)))
+    left, right = st.columns([1, 1])
+    with left:
+        st.markdown("**Headroom to the internal limits** (tightest entity or the group)")
+        st.altair_chart(headroom_chart(executive.headroom(con, regime), data.thresholds(dashboard)))
+    with right:
+        st.markdown("**Group trends** (every business day of the run)")
+        lcr, nsfr = data.ratio_trend(con, "lcr", regime), data.ratio_trend(con, "nsfr", regime)
+        st.altair_chart(small_trend(lcr, data.limit_value(con, "lcr"), "Group LCR", "floor"))
+        st.altair_chart(small_trend(nsfr, data.limit_value(con, "nsfr"), "Group NSFR", "floor"))
+        eve = data.eve_share_trend(con, regime)
+        st.altair_chart(
+            small_trend(eve, data.limit_value(con, "eve_tier1"), "Group EVE loss / Tier 1", "cap")
+        )
+    st.caption(
+        "Status: red for a limit breach, a missed regulatory minimum or an IRRBB outlier; amber "
+        "for a limit at warning or an early-warning indicator in alert. Every sentence is built "
+        "from the figures in the other tabs. The model validation of the LCR run-off "
+        "assumptions is in the project's validation report."
+    )
+
+
 def limits_tab(dashboard: data.Dashboard, con, regime: str) -> None:
     levels = data.thresholds(dashboard)
     st.caption(
@@ -440,16 +564,19 @@ def main() -> None:
         )
     st.caption(f"{REGIMES[regime]} rules, as of {data.latest_date(con):%d %b %Y}")
     headline(con, regime)
-    tabs = st.tabs(["Limits", "Liquidity", "IRRBB", "Since the day before", "Data quality"])
+    names = ["Executive summary", "Limits", "Liquidity", "IRRBB", "Since the day before"]
+    tabs = st.tabs([*names, "Data quality"])
     with tabs[0]:
-        limits_tab(dashboard, con, regime)
+        executive_tab(dashboard, con, regime)
     with tabs[1]:
-        liquidity_tab(con, regime)
+        limits_tab(dashboard, con, regime)
     with tabs[2]:
-        irrbb_tab(con, regime)
+        liquidity_tab(con, regime)
     with tabs[3]:
-        changes_tab(con, regime)
+        irrbb_tab(con, regime)
     with tabs[4]:
+        changes_tab(con, regime)
+    with tabs[5]:
         quality_tab(dashboard, con)
 
 

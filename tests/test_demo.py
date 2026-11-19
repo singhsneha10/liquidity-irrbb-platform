@@ -56,7 +56,7 @@ def test_the_cloud_entry_point_shows_the_demo(monkeypatch, clean_environment):
     assert not page.exception
     assert "Demo: a synthetic bank" in page.info[0].value
     assert "demo, built on this server" in " ".join(c.value for c in page.sidebar.caption)
-    assert page.tabs[0].label == "Limits"
+    assert page.tabs[0].label == "Executive summary"
     assert page.metric[0].label == "Limits in breach"
 
 

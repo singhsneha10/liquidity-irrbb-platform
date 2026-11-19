@@ -142,9 +142,12 @@ def _charts(page: AppTest) -> list:
 def test_the_page_shows_every_tab_and_chart_without_errors(page, board):
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
-        "Limits", "Liquidity", "IRRBB", "Since the day before", "Data quality",
+        "Executive summary", "Limits", "Liquidity", "IRRBB", "Since the day before",
+        "Data quality",
     ]  # fmt: skip
-    assert len(_charts(page)) == 9  # 3 limit bars, 2 trends, the outlier test, 2 scenarios, drivers
+    # executive: headroom + 3 group trends; then 3 limit bars, 2 trends, the outlier test,
+    # 2 scenarios, drivers
+    assert len(_charts(page)) == 13
     tiles = {metric.label: metric.value for metric in page.metric}
     counts = data.status_counts(board.con, "basel")
     assert tiles["Limits in breach"] == str(counts["breach"])
@@ -159,7 +162,7 @@ def test_switching_rulebook_and_entity_reruns_cleanly(page):
     assert not page.exception
     assert page.caption[0].value.startswith("UK PRA rules")
     page.selectbox(key="irrbb_who").set_value("BANK_UK").run()
-    assert not page.exception and len(_charts(page)) == 9
+    assert not page.exception and len(_charts(page)) == 13
 
 
 def test_without_a_published_run_the_page_says_so(tmp_path, monkeypatch):
