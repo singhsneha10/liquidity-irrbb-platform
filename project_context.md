@@ -312,6 +312,20 @@ data: hand-worked examples written before the code, and proofs against published
   quarter before each event barely changes the shares. The `allbanks` report test runs only
   where the FDIC files exist.
 
+- **Phase 10, public dashboard (decided 2026-11-19, option A; the personal laptop is broken, so
+  nothing needing AWS or the Terraform state is possible):** Streamlit Community Cloud (free;
+  0.078-2 cores, 690 MB-2.7 GB; sleeps after 12 h idle). `streamlit_app.py` at the root sets
+  `RISKPLATFORM_DEMO=1` and runs the dashboard; `riskplatform/dashboard/demo.py` runs the REAL
+  pipeline on the default configs once per server start into a temp folder (cached), and the
+  page says it is a synthetic demo built on the server. Measured: peak 249 MB, 19-50 s here;
+  36 s to the first chart from a fresh install. `requirements.txt` (one line, `.[dashboard]`)
+  because Cloud reads requirements.txt before pyproject.toml, which it would treat as Poetry;
+  checked by installing into a fresh venv (85 s) and running the demo from it. Options B (S3
+  with AWS access keys: against the no-keys rule) and C (always-on in AWS: cost) rejected. The
+  demo notice does not name the GitHub account (the author decides whether to add the link).
+  Tests: `tests/test_demo.py` (full demo build, stopped-run message, the entry point via
+  AppTest, requirements.txt); the entry-point test restores the environment it changes.
+
 ## Status
 | Phase | Status |
 |---|---|
@@ -325,7 +339,7 @@ data: hand-worked examples written before the code, and proofs against published
 | 7. Cloud and orchestration | Code done: S3 publishing (7.1), Docker + CI (7.2), Dagster (7.3), Terraform billing alarm + platform with schedule and alerts (7.4), DuckDB query layer over the latest run, local or S3 (7.5), alerts on failures only (7.6), `--as-of` dates so each daily run adds its day (7.7). **Deployed 2026-11-16** from the personal PC: billing alarm, platform (27 resources), image `0.1.0`, one manual Fargate run (1 min 36 s, exit 2, 191 files to S3, limit email received). Daily schedule still **off**. |
 | 8. Alerts and dashboard | Done: limits config + utilisation (8.1), limits stage + S3 + query view + Dagster asset (8.2), SNS limit alert email (8.3), what changed since yesterday (8.4), Streamlit dashboard (8.5), Tableau CSV extracts (8.6), daily PDF report (8.7), README + `docs/reporting.md` + this file (8.8). 597 tests, 2 to 6 minutes (varies from run to run; not yet profiled). |
 | 9. Model validation | Done: scope and criteria before results (9.1), Fed H.8 deposits from FRED (9.2), planted deposit-run stress episode (9.3), backtest T1 + detection check T2 (9.4), LCR sensitivity T3 + benchmark T4 (9.5), `riskplatform-validate` and report consistency tests (9.6), conclusion, recommendations and SS1/23 / SR 26-2 framing (9.7), this file (9.8). R1 done: the 1985 break confirmed and excluded, overall AMBER (was RED). |
-| 10. Public deploy | Not started |
+| 10. Public deploy | Code done 2026-11-19 (option A: Streamlit Community Cloud, demo built at start-up; no AWS, no secrets). **Deploy pending: the author signs in at share.streamlit.io and creates the app** (README, "Public demo dashboard"). |
 
 ## Deployment checklist (personal PC; decided 2026-11-16)
 **All Terraform work happens on the personal PC only.** Its `terraform.tfstate` files are the

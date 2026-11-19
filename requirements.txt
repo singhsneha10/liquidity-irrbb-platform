@@ -1,0 +1,5 @@
+# For Streamlit Community Cloud only (the public demo dashboard, streamlit_app.py): it installs
+# this project with its dashboard extra. Cloud reads requirements.txt before pyproject.toml
+# (which it would otherwise treat as a Poetry file). Local development uses:
+#   pip install -e ".[dev,orchestration,dashboard]"
+.[dashboard]

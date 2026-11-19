@@ -116,6 +116,25 @@ docker build -t riskplatform .       # then: docker run --rm riskplatform
 pytest; ruff check .; ruff format --check .
 ```
 
+## Public demo dashboard
+
+`streamlit_app.py` is a public demo: it needs no AWS access and no secrets. On first load it
+builds the default synthetic bank with the full pipeline on the server (about a minute), then
+shows that run. Every figure is the pipeline's own output, and the page says so.
+
+```
+streamlit run streamlit_app.py        # the same demo, locally
+```
+
+To publish it on Streamlit Community Cloud (free; the author's account):
+1. Sign in at share.streamlit.io with GitHub, and choose **Create app**.
+2. Pick this repository, the branch (`main` once merged), and the main file `streamlit_app.py`.
+3. In **Advanced settings**, keep Python 3.12, then deploy. Cloud installs `requirements.txt`
+   (this project with its dashboard extra), which takes a few minutes the first time.
+
+An app with no visitors for 12 hours goes to sleep; the next visitor wakes it (the demo is then
+rebuilt).
+
 ## Documentation
 
 | Document | Covers |
@@ -165,5 +184,6 @@ src/riskplatform/
   model_validation/     run-off backtest on Fed H.8 data, sensitivity, riskplatform-validate
 infra/terraform/        AWS: billing alarm, then the platform
 docs/                   methodology, worked examples, data quality, reporting, validation
+streamlit_app.py        public demo dashboard (Streamlit Community Cloud; requirements.txt)
 tests/                  pytest
 ```
