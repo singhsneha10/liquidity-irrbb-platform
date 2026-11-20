@@ -5,7 +5,9 @@ ladder) and **interest rate risk in the banking book** (ΔEVE with the outlier t
 repricing gap). It runs under the **Basel III standards and the UK PRA rules side by side**,
 checks the results against the bank's internal limits, and reports them through:
 - an alert email;
-- a dashboard;
+- a dashboard, with a what-if panel (stress the run-off rates, the rate shock and a deposit
+  outflow and watch every limit move) and a click-through from any limit to the positions
+  driving it;
 - Tableau extracts;
 - a daily PDF.
 
@@ -182,6 +184,7 @@ src/riskplatform/
   notify.py             limit alert email (SNS)
   query.py              DuckDB views over the latest good run (local or S3)
   dashboard/ extracts.py report.py   Streamlit, Tableau CSVs, daily PDF
+  whatif.py             what-if levers and limit drivers (the pipeline's own code, re-run)
   pipeline.py           the whole run in one command; orchestration/ for Dagster
   storage.py            publishing to S3
   model_validation/     run-off backtest on Fed H.8 data, sensitivity, riskplatform-validate

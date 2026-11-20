@@ -22,6 +22,7 @@ from riskplatform.query import (
     TABLES,
     QueryInputError,
     connect,
+    download_validated,
     main,
     open_latest,
 )
@@ -155,6 +156,27 @@ def test_an_interrupted_download_is_repeated(s3, data_dir, tmp_path):
     (partial / "lcr.parquet").write_bytes(b"half a file")  # no .complete marker
     con, _ = open_latest("s3", tmp_path, tmp_path / "cache", S3, client=s3)
     assert con.execute("SELECT count(*) FROM lcr").fetchone()[0] > 0
+
+
+def test_validated_data_comes_down_once_and_equals_the_local_copy(s3, data_dir, tmp_path):
+    run_id = _publish(s3, data_dir)
+    folder = download_validated(s3, S3, run_id, tmp_path / "cache")
+    assert folder == tmp_path / "cache" / "validated" / run_id
+    local = sorted(
+        p.relative_to(data_dir / "validated") for p in (data_dir / "validated").rglob("*.*")
+    )
+    remote = sorted(p.relative_to(folder) for p in folder.rglob("*.*"))
+    assert remote == local
+    pd.testing.assert_frame_equal(
+        pd.read_parquet(folder / "positions"), pd.read_parquet(data_dir / "validated" / "positions")
+    )
+    s3.delete_object(Bucket=BUCKET, Key=f"{S3.s3.prefix.strip('/')}/validated/{run_id}/fx.parquet")
+    assert download_validated(s3, S3, run_id, tmp_path / "cache") == folder  # cached: no request
+
+
+def test_a_run_without_validated_data_in_s3_is_a_clear_error(s3, tmp_path):
+    with pytest.raises(QueryInputError, match="published no validated data"):
+        download_validated(s3, S3, "no-such-run", tmp_path / "cache")
 
 
 def test_s3_without_a_published_run_is_a_clear_error(s3, tmp_path):

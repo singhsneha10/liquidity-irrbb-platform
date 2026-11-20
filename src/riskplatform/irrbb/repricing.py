@@ -39,8 +39,11 @@ def bucket_index(years: np.ndarray, buckets: list[RepricingBucket]) -> np.ndarra
     return np.searchsorted(edges, np.asarray(years, dtype=float), side="left")
 
 
-def _slotted(positions: pd.DataFrame, rules: IrrbbRules) -> tuple[np.ndarray, np.ndarray]:
-    """Every repricing piece, as two arrays: bucket number and signed amount."""
+def _slotted(
+    positions: pd.DataFrame, rules: IrrbbRules
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Every repricing piece, as three arrays: bucket number, signed amount, and the row of
+    positions it comes from (0-based), so a result can be traced back to its positions."""
     missing = [column for column in REQUIRED_COLUMNS if column not in positions]
     if missing:
         raise ValueError(f"positions are missing columns {missing}")
@@ -50,21 +53,22 @@ def _slotted(positions: pd.DataFrame, rules: IrrbbRules) -> tuple[np.ndarray, np
     reprice_years = positions["reprice_days"].to_numpy(dtype=float) / DAYS_PER_YEAR
     on_sheet = (side == "asset") | (side == "liability")
     signed = np.where(side == "asset", balance, -balance)
+    row = np.arange(len(positions))
     nmd = rules.nmd.categories
     is_nmd = np.zeros(len(category), dtype=bool)
     for name in nmd:
         is_nmd |= category == name
 
     regular = on_sheet & ~is_nmd
-    pieces = [(reprice_years[regular], signed[regular])]
+    pieces = [(reprice_years[regular], signed[regular], row[regular])]
     for name, treatment in nmd.items():
         rows = on_sheet & (category == name)
         if rows.any():
             amount = signed[rows]
             core = np.full(len(amount), treatment.core_years)
-            pieces.append((core, amount * treatment.core_share))  # core: stays until core_years
+            pieces.append((core, amount * treatment.core_share, row[rows]))  # core: stays
             overnight = np.full(len(amount), OVERNIGHT_YEARS)
-            pieces.append((overnight, amount * (1.0 - treatment.core_share)))  # non-core
+            pieces.append((overnight, amount * (1.0 - treatment.core_share), row[rows]))  # non-core
     # Swaps (off balance sheet): two legs of the notional. Pay-fixed: -notional when the fixed
     # leg ends (maturity) and +notional at the floating leg's next reset; receive-fixed: the reverse.
     for name, treatment in rules.derivatives.items():
@@ -74,16 +78,24 @@ def _slotted(positions: pd.DataFrame, rules: IrrbbRules) -> tuple[np.ndarray, np
         notional = balance[rows]
         fixed_sign = -1.0 if treatment.direction == "pay_fixed" else 1.0
         reset_years = np.full(len(notional), treatment.floating_reset_days / DAYS_PER_YEAR)
-        pieces.append((reprice_years[rows], fixed_sign * notional))
-        pieces.append((reset_years, -fixed_sign * notional))
+        pieces.append((reprice_years[rows], fixed_sign * notional, row[rows]))
+        pieces.append((reset_years, -fixed_sign * notional, row[rows]))
     years = np.concatenate([p[0] for p in pieces])
     amounts = np.concatenate([p[1] for p in pieces])
-    return bucket_index(years, rules.buckets), amounts
+    owners = np.concatenate([p[2] for p in pieces])
+    return bucket_index(years, rules.buckets), amounts, owners
+
+
+def repricing_pieces(positions: pd.DataFrame, rules: IrrbbRules) -> pd.DataFrame:
+    """Every repricing piece with the row of positions it comes from: row (0-based), bucket
+    number, amount. Grouped by bucket, the pieces are exactly repricing_flows."""
+    index, amount, owner = _slotted(positions, rules)
+    return pd.DataFrame({"row": owner, "bucket": index, "amount": amount})
 
 
 def repricing_flows(positions: pd.DataFrame, rules: IrrbbRules) -> pd.DataFrame:
     """Net repricing cash flow per bucket that has one: bucket, time_years (midpoint), amount."""
-    index, amount = _slotted(positions, rules)
+    index, amount, _ = _slotted(positions, rules)
     totals = np.bincount(index, weights=amount, minlength=len(rules.buckets))
     used = np.flatnonzero(totals != 0)
     buckets = rules.buckets
@@ -98,7 +110,7 @@ def repricing_flows(positions: pd.DataFrame, rules: IrrbbRules) -> pd.DataFrame:
 
 def repricing_gap(positions: pd.DataFrame, rules: IrrbbRules) -> pd.DataFrame:
     """Assets, liabilities, gap and cumulative gap for every bucket, in order."""
-    index, amount = _slotted(positions, rules)
+    index, amount, _ = _slotted(positions, rules)
     n = len(rules.buckets)
     assets = np.bincount(index, weights=np.where(amount > 0, amount, 0.0), minlength=n)
     liabilities = np.bincount(index, weights=np.where(amount < 0, -amount, 0.0), minlength=n)

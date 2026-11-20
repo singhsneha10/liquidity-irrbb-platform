@@ -149,6 +149,36 @@ A Streamlit page over the latest good run.
     the **repricing gap** of one entity-currency book over the 19 IRRBB buckets (behavioural:
     core and non-core deposits, swap legs; equity excluded), same form as the ladder. A caption
     says how each rulebook adds up EVE across currencies (Basel: losses only; UK: gains at 50%).
+  - *What-if* (`riskplatform/whatif.py`, `config/whatif.yaml`): three sliders stress the latest
+    day and every figure is measured again with the pipeline's own, unchanged code
+    (`compute_metrics`, `compute_irrbb`, `measure_limits`), under the sidebar's rulebook, in
+    about 0.2 s:
+    - *retail run-off rates:* points added to both retail LCR run-off rates (up to +40, capped
+      at 100%);
+    - *parallel rate shock:* basis points added to the parallel up and down shocks of every
+      currency (up to +300). The EVE limit is the worst of six scenarios, so this moves it only
+      where a parallel shock becomes the worst (on the demo, BANK_US first);
+    - *deposit outflow today:* a share of every retail deposit withdrawn before the stress
+      starts (up to 15%), paid by each book (entity and currency) out of its own central bank
+      reserves, then government, covered and corporate bonds, at book value. Assets and
+      liabilities fall together, so equity (the Tier 1 proxy) is unchanged. A withdrawal a book
+      cannot pay from its own liquid assets stops the what-if with a message, rather than
+      inventing the cash.
+    Tiles show the what-if breaches and the group's LCR, NSFR and EVE / Tier 1 against the
+    published run, then the three limit charts and a table, published against what-if. With
+    every lever at 0 the what-if equals the published limits (tested). Nothing is saved.
+  - *What drives this limit* (Limits tab): click a row of the limits table, or choose a limit,
+    and the positions behind it appear, starting at the first breach:
+    - *EVE:* the scenario the limit uses is preselected (any of the six can be chosen). ΔEVE is
+      linear in the repricing cash flows, so each position is measured alone with the run's own
+      repricing and ΔEVE code (`repricing_pieces` keeps each cash flow's position), weighted
+      by its currency's aggregation weight (Basel: losses only; UK: gains at 50%). The 10
+      largest positions and every category, which add up exactly to the published loss
+      (tested). On the demo: BANK_UK's steepener loss of 335.2 GBP mn is 125% retail
+      mortgages, offset by the pay-fixed swaps.
+    - *LCR:* HQLA after haircut, outflows and inflows per position, plus the build-up from HQLA
+      to net outflows with the caps as their own rows (they apply to totals).
+    - *NSFR:* each position times its ASF or RSF factor, plus equity.
   - *Since the day before.*
   - *Data quality:* rows, quarantine, file checks.
 - **Sidebar:** switches between Basel and UK PRA.
@@ -244,6 +274,12 @@ judgement, like the limits.
 12. The ladder and gap charts show the latest day only; there's no history view of them.
 13. The demo series is fixed (60 business days to 23 Oct 2026), so the dashboard's "as of" date
     is not today's date; the demo notice says so.
+14. The what-if and the drivers re-measure the latest day with the configs in `config/`, taken
+    to be the ones the run used (true for the demo, which is built from them). They need the
+    run's validated positions: from `data/validated/` locally, downloaded once per run from
+    S3 (about 2 MB for 60 days).
+15. A what-if withdrawal is paid at book value (no fire-sale loss) and only from the same
+    book's liquid assets; there is no cross-currency or central bank funding.
 
 ## How it was verified
 

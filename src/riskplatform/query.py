@@ -93,6 +93,22 @@ def latest_s3_run(client, cfg: StorageConfig) -> str:
     return json.loads(body)["run_id"]
 
 
+def _download_prefix(client, bucket: str, prefix: str, target: Path, missing: str) -> None:
+    """Copy every object under s3://bucket/prefix into target, keeping the relative paths."""
+    pages = client.get_paginator("list_objects_v2")
+    keys = [
+        item["Key"]
+        for page in pages.paginate(Bucket=bucket, Prefix=prefix)
+        for item in page.get("Contents", [])
+    ]
+    if not keys:
+        raise QueryInputError(f"s3://{bucket}/{prefix} is empty: {missing}")
+    for key in keys:
+        path = target / key.removeprefix(prefix)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        client.download_file(bucket, key, str(path))
+
+
 def download_run(client, cfg: StorageConfig, run_id: str, cache_dir: str | Path) -> Path:
     """Copy one run's metrics and IRRBB results from S3 into cache_dir, once; return cache_dir.
 
@@ -105,25 +121,31 @@ def download_run(client, cfg: StorageConfig, run_id: str, cache_dir: str | Path)
         logger.info("Run %s already downloaded to %s", run_id, cache_dir)
         return cache_dir
     bucket, prefix = cfg.s3.bucket, cfg.s3.prefix.strip("/")
-    pages = client.get_paginator("list_objects_v2")
     for stage in STAGES:
-        stage_prefix = f"{prefix}/{stage}/{run_id}/"
-        keys = [
-            item["Key"]
-            for page in pages.paginate(Bucket=bucket, Prefix=stage_prefix)
-            for item in page.get("Contents", [])
-        ]
-        if not keys:
-            raise QueryInputError(f"s3://{bucket}/{stage_prefix} is empty: run {run_id} has no "
-                                  f"{stage} results")  # fmt: skip
-        for key in keys:
-            target = cache_dir / stage / run_id / key.removeprefix(stage_prefix)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            client.download_file(bucket, key, str(target))
+        _download_prefix(client, bucket, f"{prefix}/{stage}/{run_id}/", cache_dir / stage / run_id,
+                         f"run {run_id} has no {stage} results")  # fmt: skip
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(f"downloaded from s3://{bucket}/{prefix}/\n", encoding="utf-8")
     logger.info("Downloaded run %s from s3://%s/%s/ to %s", run_id, bucket, prefix, cache_dir)
     return cache_dir
+
+
+def download_validated(client, cfg: StorageConfig, run_id: str, cache_dir: str | Path) -> Path:
+    """Copy one run's validated data from S3 into cache_dir/validated/<run_id>/, once; return it.
+
+    Only the dashboard's what-if and limit drivers need it (they measure the positions again);
+    the SQL views never do. About 2 MB for 60 business days, downloaded once per run.
+    """
+    target = Path(cache_dir) / "validated" / run_id
+    marker = Path(cache_dir) / COMPLETE / f"validated-{run_id}"
+    if marker.exists():
+        return target
+    bucket, prefix = cfg.s3.bucket, cfg.s3.prefix.strip("/")
+    _download_prefix(client, bucket, f"{prefix}/validated/{run_id}/", target,
+                     f"run {run_id} published no validated data")  # fmt: skip
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(f"downloaded from s3://{bucket}/{prefix}/\n", encoding="utf-8")
+    return target
 
 
 def connect(results_dir: str | Path, run_id: str) -> duckdb.DuckDBPyConnection:

@@ -1,0 +1,37 @@
+# What-if panel of the dashboard (riskplatform/whatif.py), validated by
+# riskplatform.config.WhatIfConfig.
+#
+# Not regulatory parameters: the levers stress the bank's latest day by hand, to see how far the
+# LCR, NSFR, EVE and the internal limits move. Nothing is saved; the published figures do not
+# change. Every lever only adds stress (none can soften a rulebook assumption).
+
+retail_deposits: [retail_stable_deposits, retail_less_stable_deposits]
+
+levers:
+  retail_run_off_add_on:
+    # Percentage points added to BOTH retail run-off rates of the chosen rulebook (Basel: 5% and
+    # 10%), capped at 100%. 0.20 takes them to 25% and 30%: about one SVB-style day ("20 percent
+    # or more" in one day, validation test T5) on top of the regulatory assumption.
+    max: 0.40
+    step: 0.01
+  parallel_shock_add_on_bp:
+    # Basis points added to the parallel shock size of every currency (Basel: GBP 275, EUR 225,
+    # USD 200). The EVE limit uses the worst of the six scenarios, so this only moves the limit
+    # once the parallel shock becomes the worst one.
+    max: 300
+    step: 25
+  deposit_outflow:
+    # Share of every retail deposit withdrawn today, before the 30-day stress starts. Paid out of
+    # the same entity's assets in the same currency, in funding_order. 15% is the most every book
+    # of the synthetic bank can pay that way (its smallest books hold liquid assets of about 20%
+    # of their retail deposits); a larger outflow would need FX or central bank funding, which the
+    # platform does not model, so the engine refuses it rather than invent the cash.
+    max: 0.15
+    step: 0.01
+
+# How a withdrawal is paid: cash first, then the most liquid securities, each sold at book value
+# (no fire-sale loss), pro rata across the positions of a category.
+funding_order: [central_bank_reserves, govt_bonds, covered_bonds, corporate_bonds]
+
+drivers:
+  top_positions: 10  # positions shown in "What drives this limit"

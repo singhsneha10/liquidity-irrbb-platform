@@ -965,3 +965,57 @@ class EarlyWarningConfig(_Strict):
 def load_early_warning_config(path: str | Path) -> EarlyWarningConfig:
     """Read a YAML file and return a validated EarlyWarningConfig."""
     return EarlyWarningConfig.model_validate(_read_yaml(path))
+
+
+class Lever(_Strict):
+    """One what-if slider: from 0 (no stress) to max, in steps."""
+
+    max: float = Field(gt=0)
+    step: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _step_fits(self) -> "Lever":
+        if self.step > self.max:
+            raise ValueError(f"step {self.step} is larger than max {self.max}")
+        return self
+
+
+class WhatIfLevers(_Strict):
+    retail_run_off_add_on: Lever  # added to both retail run-off rates (0.10 = 10 points)
+    parallel_shock_add_on_bp: Lever  # added to the parallel shock of every currency
+    deposit_outflow: Lever  # share of retail deposits withdrawn today
+
+    @model_validator(mode="after")
+    def _shares(self) -> "WhatIfLevers":
+        for name in ("retail_run_off_add_on", "deposit_outflow"):
+            if getattr(self, name).max > 1:
+                raise ValueError(f"{name}: max is a share, at most 1")
+        return self
+
+
+class DriversConfig(_Strict):
+    top_positions: int = Field(ge=1)
+
+
+class WhatIfConfig(_Strict):
+    """The dashboard's what-if panel and limit drivers (config/whatif.yaml)."""
+
+    retail_deposits: list[str] = Field(min_length=1)
+    levers: WhatIfLevers
+    funding_order: list[str] = Field(min_length=1)
+    drivers: DriversConfig
+
+    @model_validator(mode="after")
+    def _distinct(self) -> "WhatIfConfig":
+        for name in ("retail_deposits", "funding_order"):
+            values = getattr(self, name)
+            if len(set(values)) != len(values):
+                raise ValueError(f"{name} lists a category twice")
+        if set(self.retail_deposits) & set(self.funding_order):
+            raise ValueError("a category cannot be both withdrawn and used to pay")
+        return self
+
+
+def load_whatif_config(path: str | Path) -> WhatIfConfig:
+    """Read a YAML file and return a validated WhatIfConfig."""
+    return WhatIfConfig.model_validate(_read_yaml(path))
