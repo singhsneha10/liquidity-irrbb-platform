@@ -19,12 +19,15 @@ import tempfile
 from pathlib import Path
 
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
+from riskplatform import whatif
 from riskplatform.config import load_storage_config
 from riskplatform.dashboard import data, executive
 from riskplatform.dashboard.demo import DEMO_ENV, DemoBuildError, DemoRun, build_demo
+from riskplatform.metrics.run import MetricsInputError
 from riskplatform.query import QueryInputError
 
 DATA_ENV = "RISKPLATFORM_DATA_DIR"
@@ -67,7 +70,9 @@ def _axis(fmt: str | None = None, title: str | None = None) -> alt.Axis:
     return alt.Axis(**style, format=fmt) if fmt else alt.Axis(**style)
 
 
-def limit_chart(rows: pd.DataFrame, levels: dict[str, float]) -> alt.LayerChart:
+def limit_chart(
+    rows: pd.DataFrame, levels: dict[str, float], movement: str = "since the day before"
+) -> alt.LayerChart:
     """Utilisation of one limit per entity and the group, with the warning and breach lines."""
     shown = rows.assign(used=rows["utilisation"].clip(upper=2.0))  # off the scale: drawn at 200%
     top = max(1.2, float(shown["used"].max()) * 1.1)
@@ -84,7 +89,7 @@ def limit_chart(rows: pd.DataFrame, levels: dict[str, float]) -> alt.LayerChart:
                 alt.Tooltip("actual:Q", format=".1%"),
                 alt.Tooltip("limit_value:Q", format=".1%", title="limit"),
                 alt.Tooltip("status:N"),
-                alt.Tooltip("movement:N", title="since the day before"),
+                alt.Tooltip("movement:N", title=movement),
             ],
         )
     )
@@ -462,6 +467,15 @@ def limits_tab(dashboard: data.Dashboard, con, regime: str) -> None:
         type=table["limit_name"].map(LIMIT_TYPE),
         status=table["status"].map(STATUS_ICON),
     )
+    labels = [
+        f"{LIMIT_NAMES[n]} · {w}" for n, w in zip(table["limit_name"], table["who"], strict=True)
+    ]
+
+    def clicked() -> None:  # a row clicked in the table picks the limit to explain
+        rows = st.session_state["limits_table"].selection.rows
+        if rows:
+            st.session_state["driver_pick"] = labels[rows[0]]
+
     st.dataframe(
         shown[
             [
@@ -482,6 +496,9 @@ def limits_tab(dashboard: data.Dashboard, con, regime: str) -> None:
             "limit_value": st.column_config.NumberColumn("limit", format="percent"),
             "utilisation": st.column_config.NumberColumn("used", format="percent"),
         },
+        key="limits_table",
+        on_select=clicked,
+        selection_mode="single-row",
     )
     outliers = data.eve_against_tier1(con, regime)
     flagged = list(outliers.loc[outliers["outlier"], "who"])
@@ -492,6 +509,7 @@ def limits_tab(dashboard: data.Dashboard, con, regime: str) -> None:
             "above the 100% regulatory minimums, so breaching them is an internal matter."
         )
     st.caption(PROXY_NOTE)
+    drivers_section(dashboard, con, regime, table, labels)
     early_warning_table(con, regime)
 
 
@@ -685,6 +703,338 @@ def quality_tab(dashboard: data.Dashboard, con) -> None:
     )
 
 
+# --- What-if and limit drivers (riskplatform.whatif) ---------------------------------------------
+
+ROLES = {  # a driver's role -> (legend label, colour): what drains is orange, what holds is blue
+    "loss": ("adds to the loss", SLOTS[1]),
+    "offset": ("reduces the loss", SLOTS[0]),
+    "hqla": ("HQLA after haircut", SLOTS[0]),
+    "outflow": ("outflow", SLOTS[1]),
+    "inflow": ("inflow", SLOTS[2]),
+    "asf": ("available stable funding", SLOTS[0]),
+    "rsf": ("required stable funding", SLOTS[1]),
+}
+LEVER_KEYS = ("wi_run_off", "wi_parallel", "wi_outflow")
+
+
+@st.cache_resource(show_spinner="Loading the latest day's positions...")
+def _day(validated_dir: str, run_id: str) -> whatif.Day:
+    """The run's latest validated day and the rules, loaded once per run and shared."""
+    return whatif.load_day(validated_dir, Path("config"))
+
+
+def whatif_day(dashboard: data.Dashboard) -> whatif.Day | None:
+    """The latest day to stress or explain, or None (with a note) if it cannot be loaded."""
+    if dashboard.validated_dir is None:
+        st.info("This run published no validated positions, so this section is not available.")
+        return None
+    try:
+        day = _day(str(dashboard.validated_dir), dashboard.run_id)
+    except (MetricsInputError, OSError, ValueError) as error:
+        st.info(
+            f"The latest day's positions could not be loaded, so this section is not available: {error}"
+        )
+        return None
+    if day.run_id != dashboard.run_id:
+        st.info(
+            f"A newer run ({day.run_id}) has published positions since this page opened run {dashboard.run_id}; reload the page."
+        )
+        return None
+    return day
+
+
+@st.cache_data(max_entries=512, show_spinner=False)
+def _what_if(_day: whatif.Day, run_id: str, regime: str, run_off: float, parallel: float,
+             outflow: float) -> pd.DataFrame:  # fmt: skip
+    """Cached per run and lever setting, so moving a slider back is instant."""
+    return whatif.what_if(_day, regime, whatif.Levers(run_off, parallel, outflow))
+
+
+@st.cache_data(max_entries=256, show_spinner=False)
+def _drivers(_day: whatif.Day, run_id: str, kind: str, regime: str, who: str,
+             scenario: str | None = None) -> pd.DataFrame:  # fmt: skip
+    if kind == "eve":
+        return whatif.eve_drivers(_day, regime, who, scenario)
+    return {"lcr": whatif.lcr_drivers, "nsfr": whatif.nsfr_drivers}[kind](_day, regime, who)
+
+
+def _reset_levers() -> None:
+    for key in LEVER_KEYS:
+        st.session_state[key] = 0
+
+
+def _short(category: str) -> str:
+    return category.removeprefix("retail_").removesuffix("_deposits").replace("_", " ")
+
+
+def whatif_tab(dashboard: data.Dashboard, regime: str) -> None:
+    day = whatif_day(dashboard)
+    if day is None:
+        return
+    st.caption(
+        f"Stress the latest day ({day.date:%d %b %Y}) by hand and watch the LCR, NSFR, EVE and "
+        f"every internal limit move. Each figure is measured again with the pipeline's own code, "
+        f"under the {REGIMES[regime]} rules chosen in the sidebar. Nothing is saved and the "
+        "published figures do not change."
+    )
+    levers = day.whatif.levers
+    outflows = day.liquidity[regime].lcr.outflows
+    sizes = day.irrbb[regime].shocks.sizes_bp
+    retail = day.whatif.retail_deposits
+    reporting = day.cfg.fx.reporting_currency
+    left, middle, right = st.columns(3)
+    run_off = left.slider(
+        "Retail run-off rates",
+        0,
+        round(levers.retail_run_off_add_on.max * 100),
+        step=max(1, round(levers.retail_run_off_add_on.step * 100)),
+        format="+%d pts",
+        key="wi_run_off",
+        help="Percentage points added to both retail run-off rates of the LCR (capped at 100%): "
+        "how much of the deposits is assumed to leave over the 30-day stress.",
+    )
+    left.caption(", ".join(
+        f"{_short(name)} {outflows[name].rate:.0%} → {min(1.0, outflows[name].rate + run_off / 100):.0%}"
+        for name in retail
+    ))  # fmt: skip
+    parallel = middle.slider(
+        "Parallel rate shock",
+        0,
+        int(levers.parallel_shock_add_on_bp.max),
+        step=int(levers.parallel_shock_add_on_bp.step),
+        format="+%d bp",
+        key="wi_parallel",
+        help="Basis points added to the parallel up and down shocks of every currency.",
+    )
+    middle.caption(", ".join(
+        f"{currency} {size.parallel:.0f} → {size.parallel + parallel:.0f} bp"
+        for currency, size in sizes.items()
+    ))  # fmt: skip
+    outflow = right.slider(
+        "Deposit outflow today",
+        0,
+        round(levers.deposit_outflow.max * 100),
+        step=max(1, round(levers.deposit_outflow.step * 100)),
+        format="%d%%",
+        key="wi_outflow",
+        help="This share of every retail deposit is withdrawn today, before the 30-day stress "
+        "starts. Each book pays from its own central bank reserves first, then government, "
+        "covered and corporate bonds.",
+    )
+    amount = whatif.withdrawal_amount(day, outflow / 100)
+    right.caption(f"{reporting} {amount:,.0f} mn leaves the group, paid from reserves first")
+    st.button("Reset the levers", on_click=_reset_levers, icon=":material/restart_alt:")
+
+    try:
+        base = _what_if(day, dashboard.run_id, regime, 0.0, 0.0, 0.0)
+        now = _what_if(day, dashboard.run_id, regime, run_off / 100, float(parallel), outflow / 100)
+    except whatif.UnfundedOutflowError as error:
+        st.warning(f"This withdrawal cannot be paid: {error}.")
+        return
+    compared = now.merge(
+        base[["who", "limit_name", "actual", "status"]],
+        on=["who", "limit_name"],
+        suffixes=("", "_before"),
+    )
+    before, after = base["status"].value_counts(), now["status"].value_counts()
+    tiles = st.columns(1 + len(LIMIT_NAMES))
+    breaches = int(after.get("breach", 0))
+    tiles[0].metric("What-if: limits in breach", breaches, delta=breaches - int(before.get("breach", 0)) or None,
+                    delta_color="inverse", border=True)  # fmt: skip
+    for tile, name in zip(tiles[1:], LIMIT_NAMES, strict=True):
+        row = compared[(compared["limit_name"] == name) & (compared["who"] == data.GROUP)].iloc[0]
+        change = row["actual"] - row["actual_before"]
+        tile.metric(
+            f"Group {TILE_NAMES[name]}",
+            _percent(row["actual"]),
+            delta=_points(change) if abs(change) >= 5e-5 else None,
+            delta_color="inverse" if name == "eve_tier1" else "normal",
+            border=True,
+        )
+    levels = day.limits.thresholds.model_dump()
+    columns = st.columns(len(LIMIT_NAMES))
+    for column, (name, title) in zip(columns, LIMIT_NAMES.items(), strict=True):
+        rows = compared[compared["limit_name"] == name]
+        rows = rows.assign(movement=rows["status_before"] + " → " + rows["status"])
+        column.markdown(f"**{title}**")
+        column.altair_chart(limit_chart(rows, levels, movement="published → what-if"))
+    shown = compared.assign(
+        limit=compared["limit_name"].map(LIMIT_NAMES),
+        change=(compared["actual"] - compared["actual_before"]).map(_points),
+        published_status=compared["status_before"].map(STATUS_ICON),
+        whatif_status=compared["status"].map(STATUS_ICON),
+    )
+    st.dataframe(
+        shown[
+            [
+                "limit",
+                "who",
+                "actual_before",
+                "actual",
+                "change",
+                "published_status",
+                "whatif_status",
+            ]
+        ],
+        hide_index=True,
+        column_config={
+            "actual_before": st.column_config.NumberColumn("published", format="percent"),
+            "actual": st.column_config.NumberColumn("what-if", format="percent"),
+            "published_status": "published status",
+            "whatif_status": "what-if status",
+        },
+        height=35 * (len(shown) + 1) + 3,  # every limit, no scrolling
+    )
+    st.caption(
+        "How each lever works. Run-off: both retail run-off rates of the LCR rise by the points "
+        "chosen. Parallel shock: the parallel up and down shocks grow in every currency; the EVE "
+        "limit uses the worst of the six scenarios, so this moves it only where a parallel shock "
+        "becomes the worst one. Deposit outflow: the deposits leave today and each book pays out "
+        "of its own liquid assets at book value (no fire-sale loss), so assets and liabilities "
+        "fall together and equity, the Tier 1 proxy, is unchanged; HQLA falls by the whole "
+        "amount while the LCR's outflows fall only by the run-off share of it, so the LCR falls. "
+        "The ranges are set in config/whatif.yaml. Latest day only."
+    )
+
+
+def position_chart(rows: pd.DataFrame, roles: list[str], title: str) -> alt.Chart:
+    """The largest positions as bars, coloured by their role (legend), largest first."""
+    shown = rows.assign(role_label=rows["role"].map(lambda role: ROLES[role][0]))
+    domain, colours = zip(*(ROLES[role] for role in roles), strict=True)
+    return (
+        alt.Chart(shown)
+        .mark_bar(cornerRadiusEnd=3)
+        .encode(
+            y=alt.Y("position_id:N", title=None, sort=list(shown["position_id"]),
+                    axis=alt.Axis(labelLimit=320, labelOverlap=False)),
+            x=alt.X("value:Q", axis=_axis(",.0f", title)),
+            color=alt.Color("role_label:N", scale=alt.Scale(domain=list(domain), range=list(colours)),
+                            title=None),
+            tooltip=[alt.Tooltip("position_id:N", title="position"), alt.Tooltip("category:N"),
+                     alt.Tooltip("currency:N"), alt.Tooltip("role_label:N", title="role"),
+                     alt.Tooltip("value:Q", format=",.1f", title=title)],
+        )
+        .properties(height=30 * len(shown) + 40)
+    )  # fmt: skip
+
+
+def _largest(drivers: pd.DataFrame, value: str, top: int) -> pd.DataFrame:
+    order = drivers[value].abs().sort_values(ascending=False).index
+    return drivers.loc[order].head(top).assign(value=lambda t: t[value])
+
+
+def eve_drivers_view(day: whatif.Day, dashboard: data.Dashboard, con, regime: str, row) -> None:
+    who = row["who"]
+    risk = data.eve_against_tier1(con, regime).set_index("who").loc[who]
+    rules = day.irrbb[regime]
+    scenarios = list(rules.shocks.scenarios)
+    worst = risk["worst_scenario"] if risk["worst_scenario"] in scenarios else scenarios[0]
+    scenario = st.selectbox(
+        "Scenario",
+        scenarios,
+        index=scenarios.index(worst),
+        key=f"driver_scenario_{regime}_{who}",
+        help="The limit uses the worst scenario, chosen here to start with.",
+    )
+    drivers = _drivers(day, dashboard.run_id, "eve", regime, who, scenario)
+    currency = whatif.target_currency(day, who)
+    loss = float(drivers["contribution"].sum())
+    st.markdown(
+        f"{who}, {scenario}: an EVE loss of **{loss:,.1f} {currency} mn**, "
+        f"{loss / risk['tier1']:.1%} of Tier 1 (proxy) {risk['tier1']:,.0f} mn, against a limit "
+        f"of {row['limit_value']:.0%}."
+    )
+    top = _largest(drivers, "contribution", day.whatif.drivers.top_positions)
+    top = top.assign(role=np.where(top["contribution"] >= 0, "loss", "offset"))
+    left, right = st.columns([3, 2])
+    left.altair_chart(position_chart(top, ["loss", "offset"], f"{currency} mn"))
+    by_category = drivers.groupby(["category", "currency"], as_index=False)["contribution"].sum()
+    by_category = by_category.sort_values("contribution", ascending=False)
+    by_category["share"] = by_category["contribution"] / loss if loss else np.nan
+    right.dataframe(
+        by_category,
+        hide_index=True,
+        column_config={
+            "contribution": st.column_config.NumberColumn(f"{currency} mn", format="%.1f"),
+            "share": st.column_config.NumberColumn("share", format="percent"),
+        },
+    )
+    rule = ("losses only" if rules.aggregation.gains_weight == 0
+            else f"gains at {rules.aggregation.gains_weight:.0%}")  # fmt: skip
+    st.caption(
+        f"The {day.whatif.drivers.top_positions} positions that move this loss most, and every "
+        "category. Each position is measured alone with the IRRBB run's own repricing and ΔEVE "
+        "code (ΔEVE is linear in the cash flows), so the parts add up exactly to the loss. "
+        f"Across currencies a currency counts in full when it loses and is otherwise weighted "
+        f"({REGIMES[regime]}: {rule}). Deposits count through their core and non-core parts, a "
+        "swap through both legs."
+    )
+
+
+def _composition_view(drivers: pd.DataFrame, roles: list[str], currency: str, top: int) -> None:
+    left, right = st.columns([3, 2])
+    left.altair_chart(position_chart(_largest(drivers, "amount", top), roles, f"{currency} mn"))
+    by_category = drivers.groupby(["role", "category"], as_index=False)["amount"].sum()
+    by_category = by_category.assign(role=by_category["role"].map(lambda role: ROLES[role][0]))
+    right.dataframe(
+        by_category.sort_values(["role", "amount"], ascending=[True, False]),
+        hide_index=True,
+        column_config={"amount": st.column_config.NumberColumn(f"{currency} mn", format="%.1f")},
+    )
+
+
+def lcr_drivers_view(day: whatif.Day, dashboard: data.Dashboard, con, regime: str, row) -> None:
+    who, currency = row["who"], whatif.target_currency(day, row["who"])
+    summary = whatif.lcr_summary(day, regime, who).set_index("item")["amount"]
+    st.markdown(
+        f"{who}: LCR **{row['actual']:.1%}** = HQLA counted {summary['HQLA counted']:,.0f} ÷ net "
+        f"outflows {summary['net outflows']:,.0f} {currency} mn, against a limit of "
+        f"{row['limit_value']:.0%}."
+    )
+    drivers = _drivers(day, dashboard.run_id, "lcr", regime, who)
+    _composition_view(drivers, ["hqla", "outflow", "inflow"], currency,
+                      day.whatif.drivers.top_positions)  # fmt: skip
+    steps = " → ".join(f"{item} {amount:,.0f}" for item, amount in summary.items())
+    st.caption(
+        f"The largest positions in the buffer and the 30-day stress, and every category. In "
+        f"{currency} mn: {steps}. HQLA is shown after haircuts and before the caps, and inflows "
+        "before the inflow cap, because the caps apply to totals, not to single positions."
+    )
+
+
+def nsfr_drivers_view(day: whatif.Day, dashboard: data.Dashboard, con, regime: str, row) -> None:
+    who, currency = row["who"], whatif.target_currency(day, row["who"])
+    drivers = _drivers(day, dashboard.run_id, "nsfr", regime, who)
+    total = drivers.groupby("role")["amount"].sum()
+    st.markdown(
+        f"{who}: NSFR **{row['actual']:.1%}** = available stable funding {total['asf']:,.0f} ÷ "
+        f"required stable funding {total['rsf']:,.0f} {currency} mn, against a limit of "
+        f"{row['limit_value']:.0%}."
+    )
+    _composition_view(drivers, ["asf", "rsf"], currency, day.whatif.drivers.top_positions)
+    st.caption(
+        "The largest positions after their ASF or RSF factor, and every category. Equity is "
+        "available stable funding at 100%; positions with a 0% factor are left out."
+    )
+
+
+def drivers_section(dashboard: data.Dashboard, con, regime: str, table: pd.DataFrame,
+                    labels: list[str]) -> None:  # fmt: skip
+    st.markdown("**What drives this limit** (click a row of the table above, or choose here)")
+    day = whatif_day(dashboard)
+    if day is None:
+        return
+    if st.session_state.get("driver_pick") not in labels:  # first view: the first breach
+        breaches = [
+            label for label, s in zip(labels, table["status"], strict=True) if s == "breach"
+        ]
+        st.session_state["driver_pick"] = (breaches or labels)[0]
+    pick = st.selectbox("Limit", labels, key="driver_pick", label_visibility="collapsed")
+    row = table.iloc[labels.index(pick)]
+    view = {"eve_tier1": eve_drivers_view, "lcr": lcr_drivers_view, "nsfr": nsfr_drivers_view}
+    view[row["limit_name"]](day, dashboard, con, regime, row)
+
+
 def main() -> None:
     st.set_page_config(page_title="Risk monitor", page_icon="📊", layout="wide")
     storage = load_storage_config(Path("config/storage.yaml"))
@@ -736,7 +1086,7 @@ def main() -> None:
     st.badge(f"Rulebook: {REGIMES[regime]}", color="blue", icon=":material/gavel:")
     st.caption(f"{REGIMES[regime]} rules, as of {data.latest_date(con):%d %b %Y}")
     headline(con, regime)
-    names = ["Executive summary", "Limits", "Liquidity", "IRRBB", "Since the day before"]
+    names = ["Executive summary", "Limits", "Liquidity", "IRRBB", "What-if", "Since the day before"]
     tabs = st.tabs([*names, "Data quality"])
     with tabs[0]:
         executive_tab(dashboard, con, regime)
@@ -747,8 +1097,10 @@ def main() -> None:
     with tabs[3]:
         irrbb_tab(con, regime)
     with tabs[4]:
-        changes_tab(con, regime)
+        whatif_tab(dashboard, regime)
     with tabs[5]:
+        changes_tab(con, regime)
+    with tabs[6]:
         quality_tab(dashboard, con)
 
 

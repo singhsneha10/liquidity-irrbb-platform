@@ -361,6 +361,26 @@ data: hand-worked examples written before the code, and proofs against published
   50%; how "used" works for a floor vs a cap; the retail outflow measure (constant FX, a rise
   counts 0%); the demo series is fixed (60 business days to 23 Oct 2026). (5) Cold start (the
   free tier sleeps after 12 h idle): the author's action, open the app just before sharing.
+- **What-if panel and limit drivers (2026-11-20, author's request: "turns it from a report into a
+  tool"; fits "balance sheet change analysis"):** `riskplatform/whatif.py` (no Streamlit,
+  tested in `tests/test_whatif.py`) + `config/whatif.yaml` (`WhatIfConfig`). Principle: never a
+  shortcut formula; a copy of the rulebook or the positions is changed and the pipeline's own
+  `compute_metrics` / `compute_irrbb` / `measure_limits` re-run on the latest day (0.2 s). Levers
+  only add stress: retail run-off +0..40 pts (both retail rates, cap 100%), parallel shock
+  +0..300 bp (all currencies), deposit outflow 0..15% of retail deposits paid by each book
+  from its own reserves -> govt -> covered -> corporate bonds at book value (15% = the most
+  every demo book can pay; beyond, `UnfundedOutflowError`, never invented cash). With no stress
+  = the published limits (tested, both rulebooks). Drivers: EVE per position via the new
+  `irrbb.repricing.repricing_pieces` (each cash flow keeps its position row) x per-bucket unit
+  values from `delta_eve` (4.9 s per-position loop replaced, now 0.04 s), weighted by the
+  currency's aggregation weight; sums equal the published aggregated loss for every
+  who/scenario/rulebook (tested). LCR: HQLA after haircut / outflows / inflows per position, caps
+  as their own rows. NSFR: calculate_nsfr's own weighted rows + equity. Dashboard: a "What-if"
+  tab after IRRBB; the Limits table is clickable (`on_select`, single row) and feeds "What
+  drives this limit" (opens at the first breach: BANK_UK steepener 335.2 GBP mn, 125% retail
+  mortgages, hedged by pay-fixed swaps). `Dashboard.validated_dir`: `data/validated` locally;
+  in S3 mode `query.download_validated` fetches `validated/<run_id>/` once (moto-tested).
+  `whatif.Day.run_id` guards against a newer run landing while the page is open.
 
 ## Status
 | Phase | Status |

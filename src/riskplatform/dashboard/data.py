@@ -17,7 +17,8 @@ import duckdb
 import pandas as pd
 
 from riskplatform.config import StorageConfig
-from riskplatform.query import Source, open_latest
+from riskplatform.query import QueryInputError, Source, download_validated, open_latest
+from riskplatform.storage import make_client
 
 GROUP = "GROUP"
 WHO = f"coalesce(entity, '{GROUP}') AS who"
@@ -31,15 +32,25 @@ class Dashboard:
     run_id: str
     results_dir: Path  # data/ locally, the download cache for S3 (same layout)
     source: Source
+    # The run's validated data, for the what-if and limit drivers (riskplatform.whatif); None if
+    # the run published none to S3 (then those two sections say so).
+    validated_dir: Path | None = None
 
 
 def open_dashboard(
     source: Source, data_dir: str | Path, cache_dir: str | Path, storage: StorageConfig
 ) -> Dashboard:
     """The latest good run, from data/ or from S3 (downloaded once into cache_dir)."""
-    con, run_id = open_latest(source, data_dir, cache_dir, storage)
-    results_dir = Path(data_dir if source == "local" else cache_dir)
-    return Dashboard(con=con, run_id=run_id, results_dir=results_dir, source=source)
+    if source == "local":
+        con, run_id = open_latest(source, data_dir, cache_dir, storage)
+        return Dashboard(con, run_id, Path(data_dir), source, Path(data_dir) / "validated")
+    client = make_client(storage) if storage.s3.bucket else None
+    con, run_id = open_latest(source, data_dir, cache_dir, storage, client=client)
+    try:
+        validated = download_validated(client, storage, run_id, cache_dir)
+    except QueryInputError:
+        validated = None
+    return Dashboard(con, run_id, Path(cache_dir), source, validated)
 
 
 def _df(con: duckdb.DuckDBPyConnection, sql: str, *params) -> pd.DataFrame:

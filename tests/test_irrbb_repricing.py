@@ -7,7 +7,7 @@ import pytest
 
 from riskplatform.config import IrrbbRules, load_irrbb_rules
 from riskplatform.ingestion.generate import generate
-from riskplatform.irrbb.repricing import repricing_flows, repricing_gap
+from riskplatform.irrbb.repricing import repricing_flows, repricing_gap, repricing_pieces
 
 BASEL = load_irrbb_rules(Path(__file__).resolve().parents[1] / "config" / "irrbb" / "basel.yaml")
 
@@ -97,3 +97,23 @@ def test_receive_fixed_swap_is_the_reverse():
     swap = _positions(("interest_rate_swaps", "off_balance_sheet", 100, 3650))
     flows = repricing_flows(swap, receive).set_index("bucket")["amount"]
     assert flows.to_dict() == pytest.approx({"1M-3M": -100.0, "9Y-10Y": 100.0})
+
+
+def test_pieces_trace_every_flow_back_to_its_position(cfg):
+    """Grouped by bucket, the pieces are the flows; every piece names the row it came from."""
+    positions = generate(cfg).positions
+    day = positions[positions["date"] == positions["date"].min()]
+    book = day[(day["entity"] == "BANK_UK") & (day["currency"] == "GBP")].reset_index(drop=True)
+    pieces = repricing_pieces(book, BASEL)
+    flows = repricing_flows(book, BASEL)
+    by_bucket = pieces.groupby("bucket")["amount"].sum()
+    by_bucket = by_bucket[by_bucket != 0]
+    assert [BASEL.buckets[i].label for i in by_bucket.index] == list(flows["bucket"])
+    assert by_bucket.to_numpy() == pytest.approx(flows["amount"].to_numpy())
+    assert pieces["row"].between(0, len(book) - 1).all()
+    # A deposit splits in two (core, non-core), a swap into two legs; a loan is one piece.
+    counts = pieces["row"].value_counts()
+    category = book["category"]
+    assert (counts[category.index[category == "retail_stable_deposits"]] == 2).all()
+    assert (counts[category.index[category == "interest_rate_swaps"]] == 2).all()
+    assert (counts[category.index[category == "corporate_loans"]] == 1).all()

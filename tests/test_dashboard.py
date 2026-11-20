@@ -156,12 +156,12 @@ def _charts(page: AppTest) -> list:
 def test_the_page_shows_every_tab_and_chart_without_errors(page, board):
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
-        "Executive summary", "Limits", "Liquidity", "IRRBB", "Since the day before",
+        "Executive summary", "Limits", "Liquidity", "IRRBB", "What-if", "Since the day before",
         "Data quality",
     ]  # fmt: skip
     # executive: headroom + 3 group trends; then 3 limit bars, 2 trends, the outlier test,
     # 2 scenarios, drivers
-    assert len(_charts(page)) == 15
+    assert len(_charts(page)) == 19
     tiles = {metric.label: metric.value for metric in page.metric}
     counts = data.status_counts(board.con, "basel")
     assert tiles["Limits in breach"] == str(counts["breach"])
@@ -176,7 +176,7 @@ def test_switching_rulebook_and_entity_reruns_cleanly(page):
     assert not page.exception
     assert page.caption[0].value.startswith("UK PRA rules")
     page.selectbox(key="irrbb_who").set_value("BANK_UK").run()
-    assert not page.exception and len(_charts(page)) == 15
+    assert not page.exception and len(_charts(page)) == 19
 
 
 def test_without_a_published_run_the_page_says_so(tmp_path, monkeypatch):
@@ -278,4 +278,35 @@ def test_the_ladder_and_the_gap_follow_their_selectors(page):
     page.selectbox(key="ladder_who").set_value("BANK_US").run()
     book = page.selectbox(key="gap_book")
     book.set_value(book.options[-1]).run()
-    assert not page.exception and len(_charts(page)) == 15
+    assert not page.exception and len(_charts(page)) == 19
+
+
+def test_the_what_if_moves_with_its_levers_and_resets(page):
+    def table() -> pd.DataFrame:
+        return next(df.value for df in page.dataframe if "whatif_status" in df.value.columns)
+
+    assert [slider.value for slider in page.slider] == [0, 0, 0]
+    assert (table()["actual"] == table()["actual_before"]).all()  # no stress: the published run
+    page.slider(key="wi_run_off").set_value(40).run()
+    page.slider(key="wi_outflow").set_value(15).run()
+    assert not page.exception
+    lcr = table()[table()["limit"] == "LCR"]
+    assert len(lcr) == 4 and (lcr["actual"] < lcr["actual_before"]).all()
+    assert lcr["whatif_status"].str.contains("breach").all()
+    breach = next(m for m in page.metric if m.label == "What-if: limits in breach")
+    assert int(breach.value) == table()["whatif_status"].str.contains("breach").sum()
+    page.button[0].click().run()
+    assert [slider.value for slider in page.slider] == [0, 0, 0]
+
+
+def test_what_drives_a_limit_starts_at_the_first_breach_and_follows_the_choice(page):
+    pick = page.selectbox(key="driver_pick")
+    table = next(df.value for df in page.dataframe if "type" in df.value.columns)
+    first_breach = table[table["status"].str.contains("breach")].iloc[0]
+    assert pick.value == f"{first_breach['limit']} · {first_breach['who']}"
+    loss = next(m.value for m in page.markdown if "an EVE loss of" in m.value)
+    assert first_breach["who"] in loss and "of Tier 1 (proxy)" in loss
+    for choice, words in (("LCR · GROUP", "HQLA counted"), ("NSFR · BANK_UK", "stable funding")):
+        page.selectbox(key="driver_pick").set_value(choice).run()
+        assert not page.exception
+        assert any(words in m.value for m in page.markdown)
